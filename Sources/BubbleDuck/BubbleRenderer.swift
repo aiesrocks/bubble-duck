@@ -70,6 +70,21 @@ struct BubbleRenderer {
             ))
         }
 
+        // Draw ripple rings (aiesrocks/bubble-duck#4): expanding stroked
+        // circles, alpha fading to zero over the ring's lifetime.
+        for ring in state.ripples {
+            let radius = ring.age * ring.maxRadius * s
+            let alpha = (1.0 - ring.age) * 0.7
+            let rx = ring.x * s
+            let ry = ring.y * s
+            context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: alpha))
+            context.setLineWidth(max(0.8, s * 0.004))
+            context.strokeEllipse(in: CGRect(
+                x: rx - radius, y: ry - radius,
+                width: radius * 2, height: radius * 2
+            ))
+        }
+
         // Draw floating agent
         if state.duck.enabled {
             drawAgent(context: context, duck: state.duck, agentType: state.config.agentType,

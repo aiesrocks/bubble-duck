@@ -10,6 +10,10 @@ public struct SimulationState: Sendable {
     public var duck: DuckState
     public var overlay: OverlayState
 
+    /// Active surface ripples (aiesrocks/bubble-duck#4). Spawned on bubble
+    /// pops and agent edge bounces; aged + culled each simulation step.
+    public var ripples: [RippleRing] = []
+
     /// User-facing configuration (physics knobs, features, colors).
     /// Mutating this directly has no effect; call `apply(_:)` to push changes
     /// into the sub-systems.
@@ -75,6 +79,12 @@ public struct SimulationState: Sendable {
         let popped = bubbleSystem.step(waterLevels: water.levels)
         for col in popped {
             water.displace(column: col, amount: bubbleSystem.rippleStrength)
+            if !reduceMotion {
+                // Surface ring at the pop point
+                let xFrac = (Double(col) + 0.5) / Double(water.columnCount)
+                let yFrac = water.levels[col]
+                ripples.append(RippleRing(x: xFrac, y: yFrac))
+            }
         }
 
         // Step water physics so levels smoothly track their memory target.
@@ -88,6 +98,25 @@ public struct SimulationState: Sendable {
             let surface = water.levels[splashColumn]
             bubbleSystem.spawnBurst(x: duck.x, nearSurface: surface, count: 3)
             water.displace(column: splashColumn, amount: -bubbleSystem.rippleStrength * 0.6)
+            // Agent splashes generate a slightly larger ring
+            ripples.append(RippleRing(x: duck.x, y: surface, maxRadius: 0.11))
+        }
+
+        // Age ripples and cull any that have expired. Skipped under Reduce
+        // Motion so any rings present before the toggle die off naturally
+        // without new ones being spawned.
+        if !reduceMotion {
+            let dt = 1.0 / 60.0
+            let increment = dt / RippleRing.lifetimeSeconds
+            var i = 0
+            while i < ripples.count {
+                ripples[i].age += increment
+                if ripples[i].age >= 1.0 {
+                    ripples.remove(at: i)
+                } else {
+                    i += 1
+                }
+            }
         }
 
         // Animate overlay alpha
