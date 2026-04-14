@@ -17,6 +17,10 @@ final class DockTileController {
     private var frameTimer: Timer?
     private var metricsTimer: Timer?
 
+    /// Active GIF recording, if any. Set by `startRecording`, cleared when
+    /// the recorder reports completion (or when explicitly cancelled).
+    private var gifRecorder: GIFRecorder?
+
     /// Target frame interval in seconds (~60fps like wmbubble's 15ms delay)
     private let frameInterval: TimeInterval = 1.0 / 60.0
     /// How often to poll system metrics (every ~1 second)
@@ -91,8 +95,47 @@ final class DockTileController {
 
     private func tick() {
         simulation.step()
-        imageView.image = renderer.render(state: simulation)
+        let image = renderer.render(state: simulation)
+        imageView.image = image
         NSApplication.shared.dockTile.display()
+
+        // Feed the GIF recorder, if active. The recorder samples one frame
+        // out of every N sim ticks (see GIFRecorder.sampleEvery), so this
+        // is cheap on the non-sample frames and writes a single CGImage
+        // through ImageIO on the sample frames.
+        if let recorder = gifRecorder, recorder.tick(image: image) {
+            gifRecorder = nil
+        }
+    }
+
+    // MARK: - GIF recording
+
+    /// True if a GIF recording is currently in progress.
+    var isRecording: Bool { gifRecorder != nil }
+
+    /// Start a fresh GIF recording for `duration` seconds. Completes by
+    /// calling `onComplete` with the saved URL (reveals in Finder by default
+    /// at the AppDelegate layer). No-op if a recording is already active.
+    /// Returns `true` if recording started.
+    @discardableResult
+    func startRecording(duration: TimeInterval,
+                        onComplete: @escaping (URL) -> Void) -> Bool {
+        guard gifRecorder == nil else { return false }
+        do {
+            let recorder = try GIFRecorder(duration: duration)
+            recorder.onComplete = onComplete
+            gifRecorder = recorder
+            return true
+        } catch {
+            NSLog("BubbleDuck: failed to start GIF recording: \(error)")
+            return false
+        }
+    }
+
+    /// Stop the active recording early, flushing whatever's been captured.
+    func cancelRecording() {
+        gifRecorder?.cancel()
+        gifRecorder = nil
     }
 
     private func updateMetrics() {
