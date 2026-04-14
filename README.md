@@ -9,9 +9,11 @@ Your Dock icon becomes a living aquarium that visualizes system health at a glan
 - **Water color** shifts from blue to red as **swap usage** increases
 - A **rubber duck** bobs on the surface
 
-## Screenshots
+## Screenshot
 
-*(Coming soon)*
+<p align="center">
+  <img src="docs/screenshot.png" alt="BubbleDuck dock tile showing water, bubbles, rubber duck, and CPU gauge" width="256">
+</p>
 
 ## Requirements
 
@@ -61,13 +63,11 @@ This separation means the simulation logic can be edited and tested from any env
 
 ## Configuration
 
-*(Planned — not yet implemented)*
+Right-click the dock icon → **Settings**, or press **Cmd+,** to open the settings panel.
 
-Configurable parameters will match wmbubble's options:
-
-- Physics: `maxBubbles`, `gravity`, `ripples`, `volatility`, `viscosity`, `speedLimit`
-- Colors: air, liquid, duck body/bill/eye (with swap-based interpolation)
-- Features: duck on/off, CPU gauge, graphs, clock overlay
+- **Physics**: max bubbles, gravity, ripple strength, volatility, viscosity, speed limit
+- **Features**: duck on/off
+- **Overlays**: click the dock icon to cycle through load average and memory info screens
 
 ## Origin
 
