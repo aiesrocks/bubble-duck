@@ -12,8 +12,6 @@ final class DockTileController {
     private let metrics: SystemMetrics
 
     /// Single reusable image view installed as the dock tile's content view.
-    /// Recreating an NSImageView every frame was wasteful and could flicker;
-    /// we just mutate its `.image` and call `dockTile.display()`.
     private let imageView = NSImageView()
 
     private var frameTimer: Timer?
@@ -33,10 +31,37 @@ final class DockTileController {
         NSApplication.shared.dockTile.contentView = imageView
     }
 
-    /// Push a new configuration into the running simulation. Takes effect on
-    /// the next frame — bubbles, water levels, and duck position are preserved.
+    /// Push a new configuration into the running simulation.
     func apply(_ config: SimulationConfig) {
         simulation.apply(config)
+    }
+
+    /// Set a specific overlay screen.
+    func setOverlay(_ screen: OverlayScreen) {
+        simulation.overlay.screen = screen
+        simulation.overlay.locked = screen != .none
+    }
+
+    /// Cycle through overlay screens: none → loadAverage → memoryInfo → none.
+    /// wmbubble uses hover/shift; we use dock icon click since macOS dock
+    /// doesn't support hover detection.
+    func cycleOverlay() {
+        if simulation.overlay.locked {
+            simulation.overlay.locked = false
+            simulation.overlay.screen = .none
+        } else {
+            switch simulation.overlay.screen {
+            case .none:
+                simulation.overlay.screen = .loadAverage
+                simulation.overlay.locked = true
+            case .loadAverage:
+                simulation.overlay.screen = .memoryInfo
+                simulation.overlay.locked = true
+            case .memoryInfo:
+                simulation.overlay.screen = .none
+                simulation.overlay.locked = false
+            }
+        }
     }
 
     func start() {
@@ -75,5 +100,20 @@ final class DockTileController {
         simulation.cpuLoad = snapshot.cpuLoad
         simulation.memoryUsage = snapshot.memoryUsage
         simulation.swapUsage = snapshot.swapUsage
+
+        // Feed overlay data
+        simulation.overlay.loadAverage1 = snapshot.loadAverage1
+        simulation.overlay.loadAverage5 = snapshot.loadAverage5
+        simulation.overlay.loadAverage15 = snapshot.loadAverage15
+        simulation.overlay.memoryUsedBytes = snapshot.memoryUsedBytes
+        simulation.overlay.memoryTotalBytes = snapshot.memoryTotalBytes
+        simulation.overlay.swapUsedBytes = snapshot.swapUsedBytes
+        simulation.overlay.swapTotalBytes = snapshot.swapTotalBytes
+
+        // Record history sample (~1/sec like wmbubble)
+        simulation.overlay.recordHistory(
+            cpuLoad: snapshot.cpuLoad,
+            memoryUsage: snapshot.memoryUsage
+        )
     }
 }

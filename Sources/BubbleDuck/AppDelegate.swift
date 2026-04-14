@@ -31,29 +31,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// Clicking the dock icon (when no window is open) opens Settings.
-    /// The system auto-activates the app on dock click, so we just need to
-    /// surface the Settings window.
+    /// Clicking the dock icon cycles through overlay screens:
+    /// none → load average → memory info → none.
+    /// wmbubble uses hover; we use click since macOS dock has no hover API.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openSettings() }
-        return true
+        dockTileController?.cycleOverlay()
+        return false  // don't open any window on click
     }
 
-    /// Right-click dock menu: "Settings…" shortcut into the SwiftUI Settings
-    /// scene. The system appends "Quit" automatically.
+    /// Right-click dock menu with overlay toggles and settings.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let item = NSMenuItem(
-            title: "Settings…",
+
+        let loadAvgItem = NSMenuItem(
+            title: "Show Load Average",
+            action: #selector(showLoadAverage),
+            keyEquivalent: ""
+        )
+        loadAvgItem.target = self
+        menu.addItem(loadAvgItem)
+
+        let memInfoItem = NSMenuItem(
+            title: "Show Memory Info",
+            action: #selector(showMemoryInfo),
+            keyEquivalent: ""
+        )
+        memInfoItem.target = self
+        menu.addItem(memInfoItem)
+
+        let hideOverlayItem = NSMenuItem(
+            title: "Hide Overlay",
+            action: #selector(hideOverlay),
+            keyEquivalent: ""
+        )
+        hideOverlayItem.target = self
+        menu.addItem(hideOverlayItem)
+
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "Settings\u{2026}",
             action: #selector(openSettingsFromMenu),
             keyEquivalent: ","
         )
-        item.target = self
-        menu.addItem(item)
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         return menu
     }
 
     // MARK: - Private
+
+    @objc private func showLoadAverage() {
+        dockTileController?.setOverlay(.loadAverage)
+    }
+
+    @objc private func showMemoryInfo() {
+        dockTileController?.setOverlay(.memoryInfo)
+    }
+
+    @objc private func hideOverlay() {
+        dockTileController?.setOverlay(.none)
+    }
 
     @objc private func openSettingsFromMenu() {
         openSettings()

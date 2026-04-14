@@ -8,6 +8,7 @@ public struct SimulationState: Sendable {
     public var water: WaterSimulation
     public var bubbleSystem: BubbleSystem
     public var duck: DuckState
+    public var overlay: OverlayState
 
     /// User-facing configuration (physics knobs, features, colors).
     /// Mutating this directly has no effect; call `apply(_:)` to push changes
@@ -29,6 +30,7 @@ public struct SimulationState: Sendable {
         self.water = WaterSimulation(columnCount: columnCount)
         self.bubbleSystem = BubbleSystem()
         self.duck = DuckState()
+        self.overlay = OverlayState()
         self.config = config
         apply(config)
     }
@@ -68,6 +70,9 @@ public struct SimulationState: Sendable {
 
         // Step duck
         duck.step(waterLevels: water.levels)
+
+        // Animate overlay alpha
+        overlay.stepAlpha()
     }
 }
 

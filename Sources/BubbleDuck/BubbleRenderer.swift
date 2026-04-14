@@ -11,6 +11,16 @@ import BubbleCore
 struct BubbleRenderer {
     let size: Int
 
+    // wmbubble overlay colors
+    private let digitColor = CGColor(red: 0.19, green: 0.55, blue: 0.94, alpha: 1)     // #308cf0
+    private let warningColor = CGColor(red: 0.94, green: 0.2, blue: 0.2, alpha: 1)     // red >90%
+    private let graphField = CGColor(red: 0.125, green: 0.125, blue: 0.125, alpha: 1)   // #202020
+    private let graphGrid = CGColor(red: 0.024, green: 0.165, blue: 0, alpha: 1)        // #062A00
+    private let graphBar = CGColor(red: 0, green: 0.49, blue: 0.44, alpha: 1)           // #007D71
+    private let graphMax = CGColor(red: 0.125, green: 0.71, blue: 0.68, alpha: 1)       // #20B6AE
+    private let graphMarker = CGColor(red: 0.44, green: 0.89, blue: 0.44, alpha: 1)     // #71E371
+    private let gaugeDigitColor = CGColor(red: 0.125, green: 0.69, blue: 0.67, alpha: 1) // #20B0AC
+
     init(size: Int = 256) {
         self.size = size
     }
@@ -36,22 +46,21 @@ struct BubbleRenderer {
         for col in 0..<columnCount {
             let x = Double(col) * colWidth
             let waterLevel = state.water.levels[col]
-            let waterY = (1.0 - waterLevel) * s  // flip Y: 0=top in CG
-
-            // Air (above water)
-            context.setFillColor(cgColor(airColor))
-            context.fill(CGRect(x: x, y: waterY, width: colWidth + 1, height: s - waterY))
+            let waterY = waterLevel * s
 
             // Water (below water level)
             context.setFillColor(cgColor(liquidColor))
             context.fill(CGRect(x: x, y: 0, width: colWidth + 1, height: waterY))
+
+            // Air (above water)
+            context.setFillColor(cgColor(airColor))
+            context.fill(CGRect(x: x, y: waterY, width: colWidth + 1, height: s - waterY))
         }
 
         // Draw bubbles
         for bubble in state.bubbleSystem.bubbles {
             let bx = bubble.x * s
-            // Bubbles are underwater, flip Y
-            let by = (1.0 - bubble.y) * s
+            let by = bubble.y * s
             let br = bubble.size * s
 
             context.setFillColor(cgColor(theme.bubbleColor))
@@ -66,22 +75,252 @@ struct BubbleRenderer {
             drawDuck(context: context, duck: state.duck, theme: theme, size: s)
         }
 
+        // CPU gauge (always visible, like wmbubble)
+        drawCPUGauge(context: context, overlay: state.overlay, size: s)
+
+        // Overlay screens (load average or memory info)
+        if state.overlay.overlayAlpha > 0.01 {
+            drawOverlay(context: context, overlay: state.overlay, size: s)
+        }
+
         nsImage.unlockFocus()
         return nsImage
     }
 
+    // MARK: - CPU Gauge
+
+    /// Draws "XX%" at bottom-center, like wmbubble's draw_cpugauge().
+    /// Always visible with alpha controlled by overlay.gaugeAlpha.
+    private func drawCPUGauge(context: CGContext, overlay: OverlayState, size: Double) {
+        let alpha = overlay.gaugeAlpha
+        guard alpha > 0.01 else { return }
+
+        context.saveGState()
+        context.setAlpha(alpha)
+
+        let text = String(format: "%d%%", overlay.cpuPercent)
+        let fontSize = size * 0.14
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: NSColor(cgColor: gaugeDigitColor) ?? .cyan
+        ]
+        let attrStr = NSAttributedString(string: text, attributes: attrs)
+        let textSize = attrStr.size()
+        let x = (size - textSize.width) / 2
+        let y = size * 0.03  // near bottom (CG y=0 is bottom)
+
+        attrStr.draw(at: NSPoint(x: x, y: y))
+
+        context.restoreGState()
+    }
+
+    // MARK: - Overlay Screens
+
+    /// Draw overlay directly on top of the water/bubbles (semi-transparent).
+    /// No opaque background box — just text and graph composited over the scene.
+    private func drawOverlay(context: CGContext, overlay: OverlayState, size: Double) {
+        context.saveGState()
+        context.setAlpha(overlay.overlayAlpha)
+
+        switch overlay.screen {
+        case .loadAverage:
+            drawLoadAverageScreen(context: context, overlay: overlay, size: size)
+        case .memoryInfo:
+            drawMemoryInfoScreen(context: context, overlay: overlay, size: size)
+        case .none:
+            break
+        }
+
+        context.restoreGState()
+    }
+
+    /// Load average screen matching wmbubble layout:
+    /// - Top: "1" "5" "15" labels with values below
+    /// - Bottom: CPU utilization bar graph
+    private func drawLoadAverageScreen(context: CGContext, overlay: OverlayState, size: Double) {
+        let labelFontSize = size * 0.07
+        let valueFontSize = size * 0.09
+
+        // --- Top section: load average labels and values ---
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: labelFontSize, weight: .medium),
+            .foregroundColor: NSColor(cgColor: digitColor) ?? .cyan
+        ]
+        let valueAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: valueFontSize, weight: .bold),
+            .foregroundColor: NSColor(cgColor: digitColor) ?? .cyan
+        ]
+
+        let labels = ["1", "5", "15"]
+        let values = [overlay.loadAverage1, overlay.loadAverage5, overlay.loadAverage15]
+        let colWidth = size / 3.0
+
+        for (i, label) in labels.enumerated() {
+            // Label at top
+            let labelStr = NSAttributedString(string: label, attributes: labelAttrs)
+            let labelW = labelStr.size().width
+            let lx = colWidth * Double(i) + (colWidth - labelW) / 2
+            labelStr.draw(at: NSPoint(x: lx, y: size - labelFontSize - 4))
+
+            // Value below label
+            let valueText = String(format: "%.2f", values[i])
+            let valueStr = NSAttributedString(string: valueText, attributes: valueAttrs)
+            let valueW = valueStr.size().width
+            let vx = colWidth * Double(i) + (colWidth - valueW) / 2
+            valueStr.draw(at: NSPoint(x: vx, y: size - labelFontSize - valueFontSize - 8))
+        }
+
+        // --- Bottom section: CPU utilization bar graph ---
+        let graphHeight = size * 0.42
+        let graphRect = CGRect(x: size * 0.04, y: size * 0.04,
+                                width: size * 0.92, height: graphHeight)
+
+        // Semi-transparent dark background for graph area only
+        context.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 0.7))
+        context.fill(graphRect)
+
+        drawBarGraph(context: context, history: overlay.cpuHistory, in: graphRect,
+                     isLoadAvg: false)
+
+        // Thin separator line above graph
+        context.setStrokeColor(digitColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: graphRect.minX, y: graphRect.maxY))
+        context.addLine(to: CGPoint(x: graphRect.maxX, y: graphRect.maxY))
+        context.strokePath()
+    }
+
+    /// Memory info screen: used mem/swap at top + memory bar graph at bottom.
+    private func drawMemoryInfoScreen(context: CGContext, overlay: OverlayState, size: Double) {
+        let fontSize = size * 0.07
+
+        let memUsedMB = Double(overlay.memoryUsedBytes) / 1_048_576
+        let memTotalMB = Double(overlay.memoryTotalBytes) / 1_048_576
+        let memPercent = overlay.memoryTotalBytes > 0
+            ? Int(Double(overlay.memoryUsedBytes) * 100 / Double(overlay.memoryTotalBytes))
+            : 0
+        let swapUsedMB = Double(overlay.swapUsedBytes) / 1_048_576
+        let swapTotalMB = Double(overlay.swapTotalBytes) / 1_048_576
+        let swapPercent = overlay.swapTotalBytes > 0
+            ? Int(Double(overlay.swapUsedBytes) * 100 / Double(overlay.swapTotalBytes))
+            : 0
+
+        // Memory line at top
+        let memColor = memPercent > 90 ? warningColor : digitColor
+        let memAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: NSColor(cgColor: memColor) ?? .cyan
+        ]
+        let memText = String(format: "m %.0f/%.0fM %d%%", memUsedMB, memTotalMB, memPercent)
+        NSAttributedString(string: memText, attributes: memAttrs)
+            .draw(at: NSPoint(x: size * 0.06, y: size - fontSize - 6))
+
+        // Swap line below
+        let swpColor = swapPercent > 90 ? warningColor : digitColor
+        let swpAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: NSColor(cgColor: swpColor) ?? .cyan
+        ]
+        let swpText = String(format: "s %.0f/%.0fM %d%%", swapUsedMB, swapTotalMB, swapPercent)
+        NSAttributedString(string: swpText, attributes: swpAttrs)
+            .draw(at: NSPoint(x: size * 0.06, y: size - fontSize * 2 - 12))
+
+        // Memory bar graph at bottom
+        let graphHeight = size * 0.42
+        let graphRect = CGRect(x: size * 0.04, y: size * 0.04,
+                                width: size * 0.92, height: graphHeight)
+
+        context.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 0.7))
+        context.fill(graphRect)
+
+        drawBarGraph(context: context, history: overlay.memoryHistory, in: graphRect,
+                     isLoadAvg: false)
+
+        context.setStrokeColor(digitColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: graphRect.minX, y: graphRect.maxY))
+        context.addLine(to: CGPoint(x: graphRect.maxX, y: graphRect.maxY))
+        context.strokePath()
+    }
+
+    /// Draw a bar graph matching wmbubble's draw_history():
+    /// auto-scaling, two-tone bars, grid lines, integer markers.
+    private func drawBarGraph(context: CGContext, history: HistoryBuffer,
+                               in rect: CGRect, isLoadAvg: Bool) {
+        let samples = history.samples
+        guard !samples.isEmpty else { return }
+
+        // Grid background
+        context.setFillColor(graphField)
+        context.fill(rect)
+
+        // Grid lines at 25%, 50%, 75%
+        context.setStrokeColor(graphGrid)
+        context.setLineWidth(0.5)
+        for fraction in [0.25, 0.5, 0.75] {
+            let y = rect.minY + rect.height * fraction
+            context.move(to: CGPoint(x: rect.minX, y: y))
+            context.addLine(to: CGPoint(x: rect.maxX, y: y))
+            context.strokePath()
+        }
+        // Vertical grid every 8 bars
+        let barWidth = rect.width / Double(history.capacity)
+        for i in stride(from: 0, to: history.capacity, by: 8) {
+            let x = rect.minX + Double(i) * barWidth
+            context.move(to: CGPoint(x: x, y: rect.minY))
+            context.addLine(to: CGPoint(x: x, y: rect.maxY))
+            context.strokePath()
+        }
+
+        // Auto-scale: wmbubble scales by 100 (1.0 for load avg, 100% for mem)
+        var scale: Double = isLoadAvg ? 1.0 : 100.0
+        let maxVal = history.maxValue
+        while maxVal > scale { scale += isLoadAvg ? 1.0 : 100.0 }
+
+        // Draw bars
+        let startIndex = max(0, samples.count - history.capacity)
+        for (i, sample) in samples[startIndex...].enumerated() {
+            let barHeight = (sample / scale) * rect.height
+            let x = rect.minX + Double(i) * barWidth
+            let capHeight = min(barHeight, 4.0)
+
+            // Bar body
+            context.setFillColor(graphBar)
+            context.fill(CGRect(x: x, y: rect.minY,
+                                 width: barWidth - 0.5, height: barHeight - capHeight))
+            // Bar cap (brighter top 2-4 pixels, like wmbubble's graph_max)
+            if barHeight > 1 {
+                context.setFillColor(graphMax)
+                context.fill(CGRect(x: x, y: rect.minY + barHeight - capHeight,
+                                     width: barWidth - 0.5, height: capHeight))
+            }
+        }
+
+        // Integer markers for load average (horizontal lines at 1.0, 2.0, etc.)
+        if isLoadAvg && scale > 1.0 {
+            context.setStrokeColor(graphMarker)
+            context.setLineWidth(1)
+            for i in 1...Int(scale) {
+                let y = rect.minY + rect.height * (Double(i) / scale)
+                context.move(to: CGPoint(x: rect.minX, y: y))
+                context.addLine(to: CGPoint(x: rect.maxX, y: y))
+                context.strokePath()
+            }
+        }
+    }
+
+    // MARK: - Duck
+
     /// Draws a classic rubber-duck silhouette (facing right) centered at the
-    /// current context origin. All coordinates are normalized 0..1 units then
-    /// multiplied by `duckSize`, so the shape scales cleanly with the canvas.
+    /// current context origin.
     private func drawDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
         let duckSize = size * 0.22
         let dx = duck.x * size
-        let dy = (1.0 - duck.y) * size  // flip Y
+        let dy = duck.y * size
         let bob = sin(duck.bobAngle) * 2.0
 
         context.saveGState()
         context.translateBy(x: dx, y: dy + bob)
-        // Duck sits slightly above the waterline so its belly grazes the surface
         context.translateBy(x: 0, y: -duckSize * 0.1)
 
         if duck.isUpsideDown {
@@ -89,23 +328,22 @@ struct BubbleRenderer {
         }
         context.scaleBy(x: duckSize, y: duckSize)
 
-        // Body silhouette: belly curves down, back slopes up into an upturned
-        // tail, then back-top flows forward into the neck.
+        // Body silhouette
         let body = CGMutablePath()
-        body.move(to: CGPoint(x: 0.55, y: -0.05))                               // chest
-        body.addCurve(to: CGPoint(x: -0.45, y: -0.18),                          // belly → back
+        body.move(to: CGPoint(x: 0.55, y: -0.05))
+        body.addCurve(to: CGPoint(x: -0.45, y: -0.18),
                       control1: CGPoint(x: 0.55, y: -0.38),
                       control2: CGPoint(x: -0.30, y: -0.40))
-        body.addCurve(to: CGPoint(x: -0.58, y: 0.18),                           // up to tail tip
+        body.addCurve(to: CGPoint(x: -0.58, y: 0.18),
                       control1: CGPoint(x: -0.62, y: -0.15),
                       control2: CGPoint(x: -0.68, y: 0.08))
-        body.addCurve(to: CGPoint(x: -0.28, y: 0.12),                           // tail notch forward
+        body.addCurve(to: CGPoint(x: -0.28, y: 0.12),
                       control1: CGPoint(x: -0.50, y: 0.32),
                       control2: CGPoint(x: -0.40, y: 0.22))
-        body.addCurve(to: CGPoint(x: 0.25, y: 0.18),                            // back-top to neck
+        body.addCurve(to: CGPoint(x: 0.25, y: 0.18),
                       control1: CGPoint(x: -0.05, y: 0.22),
                       control2: CGPoint(x: 0.12, y: 0.28))
-        body.addCurve(to: CGPoint(x: 0.55, y: -0.05),                           // neck down to chest
+        body.addCurve(to: CGPoint(x: 0.55, y: -0.05),
                       control1: CGPoint(x: 0.55, y: 0.12),
                       control2: CGPoint(x: 0.62, y: 0.02))
         body.closeSubpath()
@@ -114,7 +352,7 @@ struct BubbleRenderer {
         context.addPath(body)
         context.fillPath()
 
-        // Subtle highlight on the back for a 3-D feel (blended body color + white)
+        // Highlight
         let highlight = blend(theme.duckBody, with: SimColor(r: 1, g: 1, b: 1), t: 0.35)
         context.setFillColor(cgColor(highlight))
         context.fillEllipse(in: CGRect(x: -0.20, y: 0.02, width: 0.30, height: 0.08))
@@ -123,10 +361,9 @@ struct BubbleRenderer {
         context.setFillColor(cgColor(theme.duckBody))
         context.fillEllipse(in: CGRect(x: 0.18, y: 0.12, width: 0.48, height: 0.48))
 
-        // Bill — two stacked ellipses suggest an open-beak look
+        // Bill
         context.setFillColor(cgColor(theme.duckBill))
         context.fillEllipse(in: CGRect(x: 0.55, y: 0.26, width: 0.38, height: 0.16))
-        // Bill shadow (darker lower half) for separation
         let billShadow = blend(theme.duckBill, with: SimColor(r: 0, g: 0, b: 0), t: 0.25)
         context.setFillColor(cgColor(billShadow))
         context.fillEllipse(in: CGRect(x: 0.58, y: 0.22, width: 0.32, height: 0.06))
@@ -141,6 +378,8 @@ struct BubbleRenderer {
 
         context.restoreGState()
     }
+
+    // MARK: - Helpers
 
     private func blend(_ a: SimColor, with b: SimColor, t: Double) -> SimColor {
         a.lerp(to: b, t: t)

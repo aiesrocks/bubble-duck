@@ -16,13 +16,30 @@ final class SystemMetrics {
         var cpuLoad: Double      // 0.0...1.0
         var memoryUsage: Double  // 0.0...1.0
         var swapUsage: Double    // 0.0...1.0
+        var loadAverage1: Double = 0.0
+        var loadAverage5: Double = 0.0
+        var loadAverage15: Double = 0.0
+        var memoryUsedBytes: UInt64 = 0
+        var memoryTotalBytes: UInt64 = 0
+        var swapUsedBytes: UInt64 = 0
+        var swapTotalBytes: UInt64 = 0
     }
 
     func read() -> Snapshot {
+        let (memUsage, memUsed, memTotal) = readMemoryDetailed()
+        let (swapUsage, swapUsed, swapTotal) = readSwapDetailed()
+        let loadAvgs = readLoadAverages()
         return Snapshot(
             cpuLoad: readCPU(),
-            memoryUsage: readMemory(),
-            swapUsage: readSwap()
+            memoryUsage: memUsage,
+            swapUsage: swapUsage,
+            loadAverage1: loadAvgs.0,
+            loadAverage5: loadAvgs.1,
+            loadAverage15: loadAvgs.2,
+            memoryUsedBytes: memUsed,
+            memoryTotalBytes: memTotal,
+            swapUsedBytes: swapUsed,
+            swapTotalBytes: swapTotal
         )
     }
 
@@ -71,9 +88,17 @@ final class SystemMetrics {
         return cpuSamples.reduce(0, +) / Double(cpuSamples.count)
     }
 
+    // MARK: - Load Averages (like wmbubble reads /proc/loadavg)
+
+    private func readLoadAverages() -> (Double, Double, Double) {
+        var loadavg = [Double](repeating: 0, count: 3)
+        getloadavg(&loadavg, 3)
+        return (loadavg[0], loadavg[1], loadavg[2])
+    }
+
     // MARK: - Memory (from vm_statistics64, like wmbubble reads /proc/meminfo)
 
-    private func readMemory() -> Double {
+    private func readMemoryDetailed() -> (usage: Double, used: UInt64, total: UInt64) {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride
@@ -90,7 +115,7 @@ final class SystemMetrics {
             }
         }
 
-        guard result == KERN_SUCCESS else { return 0 }
+        guard result == KERN_SUCCESS else { return (0, 0, 0) }
 
         let pageSize = Double(vm_kernel_page_size)
         let active = Double(stats.active_count) * pageSize
@@ -98,20 +123,21 @@ final class SystemMetrics {
         let compressed = Double(stats.compressor_page_count) * pageSize
 
         let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
-        guard totalMemory > 0 else { return 0 }
+        guard totalMemory > 0 else { return (0, 0, 0) }
 
         let used = active + wired + compressed
-        return min(1.0, used / totalMemory)
+        return (min(1.0, used / totalMemory), UInt64(used), UInt64(totalMemory))
     }
 
     // MARK: - Swap (from sysctl, macOS equivalent)
 
-    private func readSwap() -> Double {
+    private func readSwapDetailed() -> (usage: Double, used: UInt64, total: UInt64) {
         var swapUsage = xsw_usage()
         var size = MemoryLayout<xsw_usage>.size
         let result = sysctlbyname("vm.swapusage", &swapUsage, &size, nil, 0)
-        guard result == 0 else { return 0 }
-        guard swapUsage.xsu_total > 0 else { return 0 }
-        return Double(swapUsage.xsu_used) / Double(swapUsage.xsu_total)
+        guard result == 0 else { return (0, 0, 0) }
+        guard swapUsage.xsu_total > 0 else { return (0, 0, 0) }
+        return (Double(swapUsage.xsu_used) / Double(swapUsage.xsu_total),
+                swapUsage.xsu_used, swapUsage.xsu_total)
     }
 }

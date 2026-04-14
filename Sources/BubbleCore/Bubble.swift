@@ -34,6 +34,7 @@ public struct BubbleSystem: Sendable {
     public mutating func maybeSpawn(cpuLoad: Double, columnCount: Int) -> Int? {
         guard bubbles.count < maxBubbles else { return nil }
 
+        guard cpuLoad > 0 else { return nil }
         let spawnChance = cpuLoad * 100.0
         let roll = Double(Int.random(in: 0...100))
         guard roll <= spawnChance else { return nil }
