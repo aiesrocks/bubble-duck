@@ -28,10 +28,16 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     /// Clamp on column velocity magnitude.
     public var speedLimit: Double = 1.0
 
-    // MARK: - Features
+    // MARK: - Floating Agent
 
-    /// Show the rubber duck floating on the surface.
+    /// Show a floating agent on the water surface.
     public var duckEnabled: Bool = true
+
+    /// Which character floats on the water.
+    public var agentType: AgentType = .rubberDuck
+
+    /// Which metric drives the agent's drift speed.
+    public var speedMetric: SpeedMetric = .networkIO
 
     // MARK: - Colors
 

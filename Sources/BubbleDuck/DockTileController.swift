@@ -115,5 +115,20 @@ final class DockTileController {
             cpuLoad: snapshot.cpuLoad,
             memoryUsage: snapshot.memoryUsage
         )
+
+        // Drive floating agent speed from the configured metric
+        let speedFactor: Double
+        switch simulation.config.speedMetric {
+        case .networkIO:
+            // Normalize: 0 bytes/sec = 0, ~10 MB/sec+ = 1.0
+            speedFactor = min(1.0, snapshot.networkBytesPerSec / 10_000_000)
+        case .diskIOPS:
+            // Normalize: 0 IOPS = 0, ~5000+ IOPS = 1.0
+            speedFactor = min(1.0, snapshot.diskIOPS / 5000)
+        case .gpuUtilization:
+            // Already 0.0...1.0
+            speedFactor = snapshot.gpuUtilization
+        }
+        simulation.duck.speedFactor = speedFactor
     }
 }

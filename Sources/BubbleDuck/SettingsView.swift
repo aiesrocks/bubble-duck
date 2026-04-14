@@ -25,8 +25,18 @@ struct SettingsView: View {
                               range: 0.1...5, format: "%.2f")
             }
 
-            Section("Features") {
-                Toggle("Show duck", isOn: $store.config.duckEnabled)
+            Section("Floating Agent") {
+                Toggle("Show agent", isOn: $store.config.duckEnabled)
+                Picker("Character", selection: $store.config.agentType) {
+                    ForEach(AgentType.allCases, id: \.self) { agent in
+                        Text(agent.rawValue).tag(agent)
+                    }
+                }
+                Picker("Speed driven by", selection: $store.config.speedMetric) {
+                    ForEach(SpeedMetric.allCases, id: \.self) { metric in
+                        Text(metric.rawValue).tag(metric)
+                    }
+                }
             }
 
             Section("Colors") {

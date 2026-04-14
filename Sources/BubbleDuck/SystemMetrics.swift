@@ -3,6 +3,7 @@
 
 import Foundation
 import Darwin
+import IOKit
 
 /// Reads CPU, memory, and swap metrics from macOS kernel APIs.
 /// Equivalent to wmbubble's sys_linux.c but using Mach host_statistics.
@@ -11,6 +12,11 @@ final class SystemMetrics {
     private var previousCPUInfo: host_cpu_load_info?
     private var cpuSamples: [Double] = []
     private let maxSamples = 16  // matches wmbubble's default sample count
+
+    // Previous readings for delta-based metrics
+    private var prevNetBytes: (UInt64, UInt64) = (0, 0)
+    private var prevDiskOps: (UInt64, UInt64) = (0, 0)
+    private var prevTime: CFAbsoluteTime = 0
 
     struct Snapshot: Sendable {
         var cpuLoad: Double      // 0.0...1.0
@@ -23,12 +29,17 @@ final class SystemMetrics {
         var memoryTotalBytes: UInt64 = 0
         var swapUsedBytes: UInt64 = 0
         var swapTotalBytes: UInt64 = 0
+        // Agent speed metrics
+        var networkBytesPerSec: Double = 0   // total in+out bytes/sec
+        var diskIOPS: Double = 0             // total read+write ops/sec
+        var gpuUtilization: Double = 0       // 0.0...1.0
     }
 
     func read() -> Snapshot {
         let (memUsage, memUsed, memTotal) = readMemoryDetailed()
         let (swapUsage, swapUsed, swapTotal) = readSwapDetailed()
         let loadAvgs = readLoadAverages()
+        let (netBps, diskOps) = readDeltaMetrics()
         return Snapshot(
             cpuLoad: readCPU(),
             memoryUsage: memUsage,
@@ -39,7 +50,10 @@ final class SystemMetrics {
             memoryUsedBytes: memUsed,
             memoryTotalBytes: memTotal,
             swapUsedBytes: swapUsed,
-            swapTotalBytes: swapTotal
+            swapTotalBytes: swapTotal,
+            networkBytesPerSec: netBps,
+            diskIOPS: diskOps,
+            gpuUtilization: readGPUUtilization()
         )
     }
 
@@ -139,5 +153,101 @@ final class SystemMetrics {
         guard swapUsage.xsu_total > 0 else { return (0, 0, 0) }
         return (Double(swapUsage.xsu_used) / Double(swapUsage.xsu_total),
                 swapUsage.xsu_used, swapUsage.xsu_total)
+    }
+
+    // MARK: - Delta-based metrics (network bytes/sec, disk IOPS)
+
+    private func readDeltaMetrics() -> (networkBytesPerSec: Double, diskIOPS: Double) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = prevTime > 0 ? now - prevTime : 1.0
+        defer { prevTime = now }
+
+        // Network
+        let netBytes = readNetworkBytes()
+        let netDelta = Double(
+            (netBytes.0 &- prevNetBytes.0) + (netBytes.1 &- prevNetBytes.1)
+        )
+        let netBps = prevNetBytes.0 > 0 ? netDelta / elapsed : 0
+        prevNetBytes = netBytes
+
+        // Disk
+        let diskOps = readDiskOps()
+        let diskDelta = Double(
+            (diskOps.0 &- prevDiskOps.0) + (diskOps.1 &- prevDiskOps.1)
+        )
+        let iops = prevDiskOps.0 > 0 ? diskDelta / elapsed : 0
+        prevDiskOps = diskOps
+
+        return (netBps, iops)
+    }
+
+    // MARK: - Network I/O (cumulative bytes via sysctl NET_RT_IFLIST2)
+
+    private func readNetworkBytes() -> (bytesIn: UInt64, bytesOut: UInt64) {
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var len: Int = 0
+        guard sysctl(&mib, UInt32(mib.count), nil, &len, nil, 0) == 0 else { return (0, 0) }
+        var buf = [UInt8](repeating: 0, count: len)
+        guard sysctl(&mib, UInt32(mib.count), &buf, &len, nil, 0) == 0 else { return (0, 0) }
+
+        var totalIn: UInt64 = 0, totalOut: UInt64 = 0, offset = 0
+        while offset < len {
+            let msgPtr = buf.withUnsafeBufferPointer {
+                UnsafeRawPointer($0.baseAddress! + offset)
+            }
+            let ifm = msgPtr.assumingMemoryBound(to: if_msghdr2.self).pointee
+            if Int32(ifm.ifm_type) == RTM_IFINFO2 {
+                totalIn += ifm.ifm_data.ifi_ibytes
+                totalOut += ifm.ifm_data.ifi_obytes
+            }
+            offset += Int(ifm.ifm_msglen)
+        }
+        return (totalIn, totalOut)
+    }
+
+    // MARK: - Disk IOPS (cumulative ops via IOKit IOBlockStorageDriver)
+
+    private func readDiskOps() -> (reads: UInt64, writes: UInt64) {
+        var totalReads: UInt64 = 0, totalWrites: UInt64 = 0
+        guard let matching = IOServiceMatching("IOBlockStorageDriver") else { return (0, 0) }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault, matching, &iterator
+        ) == KERN_SUCCESS else { return (0, 0) }
+        defer { IOObjectRelease(iterator) }
+
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
+            guard let props = IORegistryEntryCreateCFProperty(
+                service, "Statistics" as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? [String: Any] else { continue }
+            if let r = props["Operations (Read)"] as? UInt64 { totalReads += r }
+            if let w = props["Operations (Write)"] as? UInt64 { totalWrites += w }
+        }
+        return (totalReads, totalWrites)
+    }
+
+    // MARK: - GPU Utilization (via IOKit IOAccelerator)
+
+    private func readGPUUtilization() -> Double {
+        guard let matching = IOServiceMatching("IOAccelerator") else { return 0 }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault, matching, &iterator
+        ) == KERN_SUCCESS else { return 0 }
+        defer { IOObjectRelease(iterator) }
+
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
+            guard let props = IORegistryEntryCreateCFProperty(
+                service, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? [String: Any] else { continue }
+            if let util = props["Device Utilization %"] as? Int {
+                return Double(util) / 100.0
+            }
+        }
+        return 0
     }
 }

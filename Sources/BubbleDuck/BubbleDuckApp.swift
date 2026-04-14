@@ -8,11 +8,11 @@ struct BubbleDuckApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // Standard macOS Settings scene — opened via Cmd-, or by clicking
-        // the dock icon (wired up in AppDelegate). The dock tile itself is
-        // the app's primary UI, so there's no main Window scene.
+        // No main window — the dock tile is the primary UI.
+        // Settings window is managed directly by AppDelegate via NSWindow
+        // to avoid SwiftUI Settings scene reliability issues.
         Settings {
-            SettingsView(store: appDelegate.configStore)
+            EmptyView()
         }
     }
 }

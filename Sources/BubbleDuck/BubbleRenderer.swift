@@ -70,9 +70,10 @@ struct BubbleRenderer {
             ))
         }
 
-        // Draw duck
+        // Draw floating agent
         if state.duck.enabled {
-            drawDuck(context: context, duck: state.duck, theme: theme, size: s)
+            drawAgent(context: context, duck: state.duck, agentType: state.config.agentType,
+                      theme: theme, size: s)
         }
 
         // CPU gauge (always visible, like wmbubble)
@@ -309,24 +310,47 @@ struct BubbleRenderer {
         }
     }
 
-    // MARK: - Duck
+    // MARK: - Floating Agents
 
-    /// Draws a classic rubber-duck silhouette (facing right) centered at the
-    /// current context origin.
-    private func drawDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
-        let duckSize = size * 0.22
+    private func drawAgent(context: CGContext, duck: DuckState, agentType: AgentType,
+                           theme: ColorTheme, size: Double) {
+        switch agentType {
+        case .rubberDuck:
+            drawRubberDuck(context: context, duck: duck, theme: theme, size: size)
+        case .mandarinDuck:
+            drawMandarinDuck(context: context, duck: duck, size: size)
+        case .otter:
+            drawOtter(context: context, duck: duck, size: size)
+        case .turtle:
+            drawTurtle(context: context, duck: duck, size: size)
+        case .frog:
+            drawFrog(context: context, duck: duck, size: size)
+        case .hippo:
+            drawHippo(context: context, duck: duck, size: size)
+        }
+    }
+
+    /// Positions the agent on the water surface and returns the scale factor.
+    private func beginAgent(context: CGContext, duck: DuckState, size: Double,
+                            agentScale: Double = 0.22) -> Double {
+        let agentSize = size * agentScale
         let dx = duck.x * size
         let dy = duck.y * size
         let bob = sin(duck.bobAngle) * 2.0
 
         context.saveGState()
         context.translateBy(x: dx, y: dy + bob)
-        context.translateBy(x: 0, y: -duckSize * 0.1)
+        context.translateBy(x: 0, y: -agentSize * 0.1)
 
         if duck.isUpsideDown {
             context.scaleBy(x: 1, y: -1)
         }
-        context.scaleBy(x: duckSize, y: duckSize)
+        context.scaleBy(x: agentSize, y: agentSize)
+        return agentSize
+    }
+
+    private func drawRubberDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size)
 
         // Body silhouette
         let body = CGMutablePath()
@@ -375,6 +399,260 @@ struct BubbleRenderer {
         // Eye glint
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
         context.fillEllipse(in: CGRect(x: 0.47, y: 0.42, width: 0.025, height: 0.025))
+
+        context.restoreGState()
+    }
+
+    // MARK: - Mandarin Duck (colorful, elegant)
+
+    private func drawMandarinDuck(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size)
+
+        // Body — brown/chestnut
+        let bodyColor = CGColor(red: 0.55, green: 0.27, blue: 0.07, alpha: 1)
+        context.setFillColor(bodyColor)
+        let body = CGMutablePath()
+        body.move(to: CGPoint(x: 0.5, y: -0.05))
+        body.addCurve(to: CGPoint(x: -0.45, y: -0.15),
+                      control1: CGPoint(x: 0.5, y: -0.35), control2: CGPoint(x: -0.3, y: -0.38))
+        body.addCurve(to: CGPoint(x: -0.5, y: 0.15),
+                      control1: CGPoint(x: -0.55, y: -0.1), control2: CGPoint(x: -0.6, y: 0.05))
+        body.addCurve(to: CGPoint(x: 0.25, y: 0.15),
+                      control1: CGPoint(x: -0.1, y: 0.2), control2: CGPoint(x: 0.1, y: 0.25))
+        body.addCurve(to: CGPoint(x: 0.5, y: -0.05),
+                      control1: CGPoint(x: 0.5, y: 0.1), control2: CGPoint(x: 0.55, y: 0.0))
+        body.closeSubpath()
+        context.addPath(body)
+        context.fillPath()
+
+        // Orange "sail" feather on back
+        context.setFillColor(CGColor(red: 1.0, green: 0.55, blue: 0.0, alpha: 1))
+        let sail = CGMutablePath()
+        sail.move(to: CGPoint(x: -0.1, y: 0.1))
+        sail.addCurve(to: CGPoint(x: -0.25, y: 0.35),
+                      control1: CGPoint(x: -0.2, y: 0.25), control2: CGPoint(x: -0.25, y: 0.3))
+        sail.addCurve(to: CGPoint(x: 0.05, y: 0.12),
+                      control1: CGPoint(x: -0.15, y: 0.3), control2: CGPoint(x: 0.0, y: 0.2))
+        sail.closeSubpath()
+        context.addPath(sail)
+        context.fillPath()
+
+        // Head — green/purple iridescent
+        context.setFillColor(CGColor(red: 0.1, green: 0.45, blue: 0.2, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.2, y: 0.1, width: 0.42, height: 0.42))
+
+        // Orange crest
+        context.setFillColor(CGColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.25, y: 0.38, width: 0.35, height: 0.15))
+
+        // White eye stripe
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+        context.fillEllipse(in: CGRect(x: 0.35, y: 0.3, width: 0.18, height: 0.06))
+
+        // Red bill
+        context.setFillColor(CGColor(red: 0.9, green: 0.15, blue: 0.1, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.52, y: 0.2, width: 0.3, height: 0.12))
+
+        // Eye
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.42, y: 0.32, width: 0.07, height: 0.07))
+
+        context.restoreGState()
+    }
+
+    // MARK: - Otter (chubby, cute, floating on back)
+
+    private func drawOtter(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.30)
+
+        // Chubby body — round and plump
+        let furColor = CGColor(red: 0.4, green: 0.25, blue: 0.12, alpha: 1)
+        context.setFillColor(furColor)
+        context.fillEllipse(in: CGRect(x: -0.42, y: -0.2, width: 0.9, height: 0.42))
+
+        // Big round lighter belly (floating on back, chubby!)
+        context.setFillColor(CGColor(red: 0.72, green: 0.58, blue: 0.42, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.3, y: -0.12, width: 0.65, height: 0.28))
+
+        // Round chubby head
+        context.setFillColor(furColor)
+        context.fillEllipse(in: CGRect(x: 0.22, y: -0.08, width: 0.35, height: 0.35))
+
+        // Big lighter face — round cheeks
+        context.setFillColor(CGColor(red: 0.75, green: 0.6, blue: 0.45, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.3, y: -0.02, width: 0.24, height: 0.22))
+
+        // Cute round nose
+        context.setFillColor(CGColor(red: 0.15, green: 0.1, blue: 0.05, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.48, y: 0.1, width: 0.07, height: 0.06))
+
+        // Round ears
+        context.setFillColor(furColor)
+        context.fillEllipse(in: CGRect(x: 0.28, y: 0.2, width: 0.1, height: 0.1))
+        context.fillEllipse(in: CGRect(x: 0.44, y: 0.2, width: 0.1, height: 0.1))
+
+        // Small happy eyes
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.35, y: 0.12, width: 0.06, height: 0.06))
+        context.fillEllipse(in: CGRect(x: 0.45, y: 0.12, width: 0.06, height: 0.06))
+
+        // Eye glints
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8))
+        context.fillEllipse(in: CGRect(x: 0.37, y: 0.14, width: 0.02, height: 0.02))
+        context.fillEllipse(in: CGRect(x: 0.47, y: 0.14, width: 0.02, height: 0.02))
+
+        // Little paws resting on belly
+        context.setFillColor(furColor)
+        context.fillEllipse(in: CGRect(x: 0.0, y: 0.06, width: 0.1, height: 0.08))
+        context.fillEllipse(in: CGRect(x: 0.12, y: 0.06, width: 0.1, height: 0.08))
+
+        // Chubby tail
+        context.fillEllipse(in: CGRect(x: -0.5, y: -0.1, width: 0.18, height: 0.14))
+
+        context.restoreGState()
+    }
+
+    // MARK: - Turtle (slow, steady)
+
+    private func drawTurtle(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.28)
+
+        // Shell — big dome shape
+        let shellColor = CGColor(red: 0.3, green: 0.45, blue: 0.2, alpha: 1)
+        context.setFillColor(shellColor)
+        context.fillEllipse(in: CGRect(x: -0.4, y: -0.12, width: 0.8, height: 0.5))
+
+        // Shell rim — darker edge
+        context.setFillColor(CGColor(red: 0.22, green: 0.35, blue: 0.14, alpha: 1))
+        context.setLineWidth(0.02)
+        context.strokeEllipse(in: CGRect(x: -0.4, y: -0.12, width: 0.8, height: 0.5))
+
+        // Shell pattern — darker hexagonal segments
+        context.setFillColor(CGColor(red: 0.2, green: 0.35, blue: 0.12, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.18, y: 0.02, width: 0.22, height: 0.22))
+        context.fillEllipse(in: CGRect(x: 0.05, y: 0.0, width: 0.2, height: 0.2))
+        context.fillEllipse(in: CGRect(x: -0.08, y: -0.06, width: 0.18, height: 0.14))
+
+        // Head — poking out right
+        let skinColor = CGColor(red: 0.4, green: 0.55, blue: 0.3, alpha: 1)
+        context.setFillColor(skinColor)
+        context.fillEllipse(in: CGRect(x: 0.3, y: 0.0, width: 0.28, height: 0.24))
+
+        // Eye
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.46, y: 0.13, width: 0.06, height: 0.06))
+
+        // Eye glint
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
+        context.fillEllipse(in: CGRect(x: 0.48, y: 0.15, width: 0.02, height: 0.02))
+
+        // Front flippers — bigger, paddle-shaped
+        context.setFillColor(skinColor)
+        context.fillEllipse(in: CGRect(x: 0.15, y: -0.22, width: 0.2, height: 0.14))
+        context.fillEllipse(in: CGRect(x: -0.2, y: -0.22, width: 0.2, height: 0.14))
+
+        // Back flippers
+        context.fillEllipse(in: CGRect(x: -0.38, y: -0.15, width: 0.14, height: 0.1))
+
+        context.restoreGState()
+    }
+
+    // MARK: - Frog (sits on water, bursty)
+
+    private func drawFrog(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.34)
+
+        // Big round body — bright lime/yellow-green to distinguish from turtle
+        let frogGreen = CGColor(red: 0.45, green: 0.85, blue: 0.1, alpha: 1)
+        context.setFillColor(frogGreen)
+        context.fillEllipse(in: CGRect(x: -0.35, y: -0.18, width: 0.7, height: 0.42))
+
+        // Lighter yellow-green belly
+        context.setFillColor(CGColor(red: 0.7, green: 0.95, blue: 0.3, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.22, y: -0.12, width: 0.5, height: 0.24))
+
+        // Wide head
+        context.setFillColor(frogGreen)
+        context.fillEllipse(in: CGRect(x: 0.02, y: -0.02, width: 0.48, height: 0.35))
+
+        // Big bulging eyes (on top of head) — bright lime
+        context.setFillColor(CGColor(red: 0.55, green: 0.9, blue: 0.15, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.1, y: 0.24, width: 0.18, height: 0.18))
+        context.fillEllipse(in: CGRect(x: 0.3, y: 0.24, width: 0.18, height: 0.18))
+
+        // Pupils
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.15, y: 0.29, width: 0.08, height: 0.08))
+        context.fillEllipse(in: CGRect(x: 0.35, y: 0.29, width: 0.08, height: 0.08))
+
+        // Eye glints
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
+        context.fillEllipse(in: CGRect(x: 0.18, y: 0.33, width: 0.03, height: 0.03))
+        context.fillEllipse(in: CGRect(x: 0.38, y: 0.33, width: 0.03, height: 0.03))
+
+        // Wide smile
+        context.setStrokeColor(CGColor(red: 0.2, green: 0.5, blue: 0.0, alpha: 1))
+        context.setLineWidth(0.025)
+        context.move(to: CGPoint(x: 0.42, y: 0.12))
+        context.addCurve(to: CGPoint(x: 0.08, y: 0.12),
+                         control1: CGPoint(x: 0.35, y: 0.04), control2: CGPoint(x: 0.15, y: 0.04))
+        context.strokePath()
+
+        // Back legs (folded, bigger)
+        context.setFillColor(frogGreen)
+        context.fillEllipse(in: CGRect(x: -0.42, y: -0.1, width: 0.2, height: 0.26))
+
+        // Front legs
+        context.fillEllipse(in: CGRect(x: 0.2, y: -0.2, width: 0.12, height: 0.14))
+
+        context.restoreGState()
+    }
+
+    // MARK: - Hippo (big, mostly submerged)
+
+    private func drawHippo(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.42)
+
+        // Only the top of the head and eyes poke above water — hippo style
+        let hippoGray = CGColor(red: 0.45, green: 0.4, blue: 0.42, alpha: 1)
+
+        // Wide head dome
+        context.setFillColor(hippoGray)
+        context.fillEllipse(in: CGRect(x: -0.45, y: -0.12, width: 0.9, height: 0.3))
+
+        // Big snout bump (front) — the most prominent feature
+        context.setFillColor(CGColor(red: 0.52, green: 0.47, blue: 0.49, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.15, y: -0.08, width: 0.4, height: 0.26))
+
+        // Nostrils — bigger
+        context.setFillColor(CGColor(red: 0.25, green: 0.2, blue: 0.22, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.33, y: 0.08, width: 0.08, height: 0.05))
+        context.fillEllipse(in: CGRect(x: 0.42, y: 0.08, width: 0.08, height: 0.05))
+
+        // Ears — small bumps on top
+        context.setFillColor(hippoGray)
+        context.fillEllipse(in: CGRect(x: -0.2, y: 0.12, width: 0.12, height: 0.12))
+        context.fillEllipse(in: CGRect(x: 0.05, y: 0.12, width: 0.12, height: 0.12))
+
+        // Inner ear
+        context.setFillColor(CGColor(red: 0.55, green: 0.45, blue: 0.48, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.17, y: 0.14, width: 0.06, height: 0.06))
+        context.fillEllipse(in: CGRect(x: 0.08, y: 0.14, width: 0.06, height: 0.06))
+
+        // Eyes — big, sitting on top of head
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+        context.fillEllipse(in: CGRect(x: -0.12, y: 0.08, width: 0.14, height: 0.14))
+        context.fillEllipse(in: CGRect(x: 0.02, y: 0.08, width: 0.14, height: 0.14))
+
+        // Pupils
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.07, y: 0.12, width: 0.07, height: 0.07))
+        context.fillEllipse(in: CGRect(x: 0.06, y: 0.12, width: 0.07, height: 0.07))
+
+        // Eye glints
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.6))
+        context.fillEllipse(in: CGRect(x: -0.04, y: 0.15, width: 0.025, height: 0.025))
+        context.fillEllipse(in: CGRect(x: 0.09, y: 0.15, width: 0.025, height: 0.025))
 
         context.restoreGState()
     }

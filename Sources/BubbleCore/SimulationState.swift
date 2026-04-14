@@ -76,7 +76,8 @@ public struct SimulationState: Sendable {
     }
 }
 
-/// The rubber duck that floats on the water surface.
+/// The floating agent that sits on the water surface.
+/// Speed is driven by a configurable system metric (network, disk, GPU).
 public struct DuckState: Sendable {
     public var x: Double = 0.5        // 0.0...1.0 horizontal position
     public var y: Double = 0.5        // vertical position (follows water)
@@ -85,12 +86,25 @@ public struct DuckState: Sendable {
     public var isUpsideDown: Bool = false
     public var enabled: Bool = true
 
+    /// Speed factor driven by the chosen metric (0.0...1.0).
+    /// 0 = gentle drift, 1 = zipping across.
+    public var speedFactor: Double = 0.0
+
+    /// Base drift speed (gentle idle movement)
+    private let baseSpeed: Double = 0.0005
+    /// Maximum additional speed from the metric
+    private let maxExtraSpeed: Double = 0.004
+
     public init() {}
 
     public mutating func step(waterLevels: [Double]) {
         guard enabled, !waterLevels.isEmpty else { return }
 
-        // Drift horizontally
+        // Drift speed = base + metric-driven extra
+        let currentSpeed = baseSpeed + speedFactor * maxExtraSpeed
+        let direction: Double = velocityX >= 0 ? 1 : -1
+        velocityX = direction * currentSpeed
+
         x += velocityX
         if x > 0.85 || x < 0.15 {
             velocityX = -velocityX
@@ -100,8 +114,8 @@ public struct DuckState: Sendable {
         let col = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
         y = waterLevels[col]
 
-        // Bob gently
-        bobAngle += 0.05
+        // Bob gently — faster bobbing when moving faster
+        bobAngle += 0.03 + speedFactor * 0.07
         if bobAngle > .pi * 2 { bobAngle -= .pi * 2 }
 
         // Flip upside down if water is very high (>95%)
