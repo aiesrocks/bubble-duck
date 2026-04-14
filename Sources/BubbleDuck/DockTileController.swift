@@ -217,5 +217,13 @@ final class DockTileController {
             speedFactor = snapshot.gpuUtilization
         }
         simulation.duck.speedFactor = speedFactor
+
+        // Rain intensity (aiesrocks/bubble-duck#10) — driven by disk IOPS,
+        // independent of the agent speed metric. Quiet below 500 IOPS so
+        // idle systems don't spontaneously rain; saturates at ~5000 IOPS.
+        let rainFloor: Double = 500
+        let rainCeiling: Double = 5000
+        let excess = max(0, snapshot.diskIOPS - rainFloor)
+        simulation.rainIntensity = min(1.0, excess / (rainCeiling - rainFloor))
     }
 }

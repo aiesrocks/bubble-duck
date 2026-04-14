@@ -14,6 +14,19 @@ public struct SimulationState: Sendable {
     /// pops and agent edge bounces; aged + culled each simulation step.
     public var ripples: [RippleRing] = []
 
+    /// Active raindrops (aiesrocks/bubble-duck#10). Spawn rate is driven
+    /// by `rainIntensity`; drops fall until they hit the water surface, at
+    /// which point they're removed and produce a small displacement + ripple.
+    public var raindrops: [Raindrop] = []
+
+    /// Rain spawn intensity 0...1, typically normalized from disk IOPS by
+    /// the macOS layer. 0 → no rain, 1 → roughly a drop per frame (max).
+    public var rainIntensity: Double = 0.0
+
+    /// Hard cap on concurrent raindrops so a sustained IOPS burst can't
+    /// create a runaway particle count.
+    public static let maxRaindrops: Int = 80
+
     /// User-facing configuration (physics knobs, features, colors).
     /// Mutating this directly has no effect; call `apply(_:)` to push changes
     /// into the sub-systems.
@@ -72,7 +85,22 @@ public struct SimulationState: Sendable {
             if let col = bubbleSystem.maybeSpawn(cpuLoad: cpuLoad, columnCount: water.columnCount) {
                 water.displace(column: col, amount: -bubbleSystem.rippleStrength)
             }
+            // Rain spawn (aiesrocks/bubble-duck#10): probability per frame
+            // equals rainIntensity, capped at maxRaindrops concurrent drops.
+            if rainIntensity > 0,
+               raindrops.count < SimulationState.maxRaindrops,
+               Double.random(in: 0..<1) < rainIntensity {
+                raindrops.append(Raindrop(
+                    x: Double.random(in: 0.04...0.96),
+                    y: 1.0,
+                    fallSpeed: Double.random(in: 0.020...0.030)
+                ))
+            }
         }
+
+        // Step raindrops (both modes — existing drops continue to fall even
+        // after Reduce Motion toggles on, so there's no sudden pop).
+        stepRaindrops()
 
         // Step existing bubbles in both modes so any currently on-screen
         // bubbles finish rising and naturally drain the tank.
@@ -121,6 +149,29 @@ public struct SimulationState: Sendable {
 
         // Animate overlay alpha
         overlay.stepAlpha()
+    }
+
+    /// Move every active raindrop down by its fall speed; a drop that
+    /// reaches its column's water surface is removed and produces a small
+    /// displacement + surface ring. Called unconditionally so existing
+    /// drops finish falling even after Reduce Motion toggles on.
+    private mutating func stepRaindrops() {
+        var i = 0
+        while i < raindrops.count {
+            raindrops[i].y -= raindrops[i].fallSpeed
+            let xFrac = raindrops[i].x
+            let col = min(Int(xFrac * Double(water.columnCount)), water.columnCount - 1)
+            let surface = water.levels[col]
+            if raindrops[i].y <= surface {
+                water.displace(column: col, amount: -0.003)
+                if !reduceMotion {
+                    ripples.append(RippleRing(x: xFrac, y: surface, maxRadius: 0.04))
+                }
+                raindrops.remove(at: i)
+            } else {
+                i += 1
+            }
+        }
     }
 }
 

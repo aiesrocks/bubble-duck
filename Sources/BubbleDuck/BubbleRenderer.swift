@@ -57,6 +57,26 @@ struct BubbleRenderer {
             context.fill(CGRect(x: x, y: waterY, width: colWidth + 1, height: s - waterY))
         }
 
+        // Draw raindrops (aiesrocks/bubble-duck#10): short slightly-blue streaks
+        // falling from the top. Rendered before bubbles so the rising bubbles
+        // and the agent sit visibly on top of the falling drops.
+        if !state.raindrops.isEmpty {
+            context.setStrokeColor(CGColor(red: 0.70, green: 0.82, blue: 1.0, alpha: 0.55))
+            context.setLineWidth(max(0.8, s * 0.005))
+            context.setLineCap(.round)
+            for drop in state.raindrops {
+                let dx = drop.x * s
+                let headY = drop.y * s
+                // Tail trails "behind" the drop in the fall direction.
+                // Drop y decreases as it falls, so the tail sits at higher y.
+                let tailY = min(1.0, drop.y + 0.035) * s
+                context.beginPath()
+                context.move(to: CGPoint(x: dx, y: tailY))
+                context.addLine(to: CGPoint(x: dx, y: headY))
+                context.strokePath()
+            }
+        }
+
         // Draw bubbles
         for bubble in state.bubbleSystem.bubbles {
             let bx = bubble.x * s
