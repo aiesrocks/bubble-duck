@@ -327,6 +327,8 @@ struct BubbleRenderer {
             drawFrog(context: context, duck: duck, size: size)
         case .hippo:
             drawHippo(context: context, duck: duck, size: size)
+        case .origamiBoat:
+            drawOrigamiBoat(context: context, duck: duck, size: size)
         }
     }
 
@@ -686,6 +688,88 @@ struct BubbleRenderer {
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.6))
         fillEyeGlint(context, x: -0.04, y: 0.15, width: 0.025, height: 0.025, openness: oHippo)
         fillEyeGlint(context, x: 0.09, y: 0.15, width: 0.025, height: 0.025, openness: oHippo)
+
+        context.restoreGState()
+    }
+
+    // MARK: - Origami Boat (folded paper sailboat)
+
+    private func drawOrigamiBoat(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.26)
+
+        // Crisp paper palette: cream base, soft shadow for folded sides, dark
+        // crease for outlines. Keeps the boat readable on any water color.
+        let paperBase = CGColor(red: 0.97, green: 0.95, blue: 0.90, alpha: 1)
+        let paperShadow = CGColor(red: 0.80, green: 0.77, blue: 0.70, alpha: 1)
+        let edge = CGColor(red: 0.32, green: 0.30, blue: 0.27, alpha: 1)
+
+        // Hull — trapezoid: flat bottom, flared sides, wide deck.
+        let hull = CGMutablePath()
+        hull.move(to: CGPoint(x: -0.55, y: 0.00))
+        hull.addLine(to: CGPoint(x: 0.55, y: 0.00))
+        hull.addLine(to: CGPoint(x: 0.38, y: -0.26))
+        hull.addLine(to: CGPoint(x: -0.38, y: -0.26))
+        hull.closeSubpath()
+
+        context.setFillColor(paperBase)
+        context.addPath(hull)
+        context.fillPath()
+
+        // Shaded right half suggests a central paper fold.
+        let hullShadow = CGMutablePath()
+        hullShadow.move(to: CGPoint(x: 0.00, y: 0.00))
+        hullShadow.addLine(to: CGPoint(x: 0.55, y: 0.00))
+        hullShadow.addLine(to: CGPoint(x: 0.38, y: -0.26))
+        hullShadow.addLine(to: CGPoint(x: 0.00, y: -0.26))
+        hullShadow.closeSubpath()
+
+        context.setFillColor(paperShadow)
+        context.addPath(hullShadow)
+        context.fillPath()
+
+        // Hull outline + center fold line.
+        context.setStrokeColor(edge)
+        context.setLineWidth(0.020)
+        context.addPath(hull)
+        context.strokePath()
+
+        context.setLineWidth(0.015)
+        context.move(to: CGPoint(x: 0.00, y: 0.00))
+        context.addLine(to: CGPoint(x: 0.00, y: -0.26))
+        context.strokePath()
+
+        // Sail — tall triangle rising from deck, slightly forward-leaning.
+        let sail = CGMutablePath()
+        sail.move(to: CGPoint(x: -0.05, y: 0.02))
+        sail.addLine(to: CGPoint(x: 0.30, y: 0.02))
+        sail.addLine(to: CGPoint(x: 0.12, y: 0.58))
+        sail.closeSubpath()
+
+        context.setFillColor(paperBase)
+        context.addPath(sail)
+        context.fillPath()
+
+        // Mirror the hull's fold shading on the sail's back half.
+        let sailShadow = CGMutablePath()
+        sailShadow.move(to: CGPoint(x: 0.12, y: 0.58))
+        sailShadow.addLine(to: CGPoint(x: 0.30, y: 0.02))
+        sailShadow.addLine(to: CGPoint(x: 0.12, y: 0.02))
+        sailShadow.closeSubpath()
+
+        context.setFillColor(paperShadow)
+        context.addPath(sailShadow)
+        context.fillPath()
+
+        // Sail outline + central crease.
+        context.setStrokeColor(edge)
+        context.setLineWidth(0.020)
+        context.addPath(sail)
+        context.strokePath()
+
+        context.setLineWidth(0.015)
+        context.move(to: CGPoint(x: 0.12, y: 0.58))
+        context.addLine(to: CGPoint(x: 0.12, y: 0.02))
+        context.strokePath()
 
         context.restoreGState()
     }
