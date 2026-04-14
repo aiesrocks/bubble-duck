@@ -4,6 +4,7 @@
 import Foundation
 import Darwin
 import IOKit
+import BubbleCore
 
 /// Reads CPU, memory, and swap metrics from macOS kernel APIs.
 /// Equivalent to wmbubble's sys_linux.c but using Mach host_statistics.
@@ -33,13 +34,30 @@ final class SystemMetrics {
         var networkBytesPerSec: Double = 0   // total in+out bytes/sec
         var diskIOPS: Double = 0             // total read+write ops/sec
         var gpuUtilization: Double = 0       // 0.0...1.0
+
+        // Memory pressure (aiesrocks/bubble-duck#22):
+        // (active + wired + compressed + swapUsed) / totalPhysical.
+        // Values > 1.0 mean the system is paging. Preferred signal for
+        // color-driven "system under stress" indicators since it reflects
+        // real-time pressure (unlike raw swapUsage, which doesn't clear).
+        var memoryTightness: Double = 0
+        var memoryPressureZone: MemoryPressure.Zone = .healthy
     }
 
     func read() -> Snapshot {
-        let (memUsage, memUsed, memTotal) = readMemoryDetailed()
+        let (memUsage, memUsed, memTotal, memComponents) = readMemoryDetailed()
         let (swapUsage, swapUsed, swapTotal) = readSwapDetailed()
         let loadAvgs = readLoadAverages()
         let (netBps, diskOps) = readDeltaMetrics()
+
+        let tightness = MemoryPressure.tightness(
+            active: memComponents.active,
+            wired: memComponents.wired,
+            compressed: memComponents.compressed,
+            swapUsed: swapUsed,
+            totalPhysical: memTotal
+        )
+
         return Snapshot(
             cpuLoad: readCPU(),
             memoryUsage: memUsage,
@@ -53,7 +71,9 @@ final class SystemMetrics {
             swapTotalBytes: swapTotal,
             networkBytesPerSec: netBps,
             diskIOPS: diskOps,
-            gpuUtilization: readGPUUtilization()
+            gpuUtilization: readGPUUtilization(),
+            memoryTightness: tightness,
+            memoryPressureZone: MemoryPressure.zone(for: tightness)
         )
     }
 
@@ -112,7 +132,13 @@ final class SystemMetrics {
 
     // MARK: - Memory (from vm_statistics64, like wmbubble reads /proc/meminfo)
 
-    private func readMemoryDetailed() -> (usage: Double, used: UInt64, total: UInt64) {
+    struct MemoryComponents {
+        var active: UInt64
+        var wired: UInt64
+        var compressed: UInt64
+    }
+
+    private func readMemoryDetailed() -> (usage: Double, used: UInt64, total: UInt64, components: MemoryComponents) {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride
@@ -129,18 +155,25 @@ final class SystemMetrics {
             }
         }
 
-        guard result == KERN_SUCCESS else { return (0, 0, 0) }
+        let emptyComponents = MemoryComponents(active: 0, wired: 0, compressed: 0)
+        guard result == KERN_SUCCESS else { return (0, 0, 0, emptyComponents) }
 
-        let pageSize = Double(vm_kernel_page_size)
-        let active = Double(stats.active_count) * pageSize
-        let wired = Double(stats.wire_count) * pageSize
-        let compressed = Double(stats.compressor_page_count) * pageSize
+        let pageSize = UInt64(vm_kernel_page_size)
+        let activeBytes = UInt64(stats.active_count) * pageSize
+        let wiredBytes = UInt64(stats.wire_count) * pageSize
+        let compressedBytes = UInt64(stats.compressor_page_count) * pageSize
 
-        let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
-        guard totalMemory > 0 else { return (0, 0, 0) }
+        let totalMemory = ProcessInfo.processInfo.physicalMemory
+        guard totalMemory > 0 else { return (0, 0, 0, emptyComponents) }
 
-        let used = active + wired + compressed
-        return (min(1.0, used / totalMemory), UInt64(used), UInt64(totalMemory))
+        let used = activeBytes + wiredBytes + compressedBytes
+        let usage = min(1.0, Double(used) / Double(totalMemory))
+        let components = MemoryComponents(
+            active: activeBytes,
+            wired: wiredBytes,
+            compressed: compressedBytes
+        )
+        return (usage, used, totalMemory, components)
     }
 
     // MARK: - Swap (from sysctl, macOS equivalent)
