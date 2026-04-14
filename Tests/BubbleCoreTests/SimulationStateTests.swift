@@ -81,6 +81,47 @@ struct SimulationStateTests {
         #expect(sim.duck.enabled == false)
     }
 
+    @Test("reduceMotion suppresses new bubble spawns")
+    func reduceMotionNoBubbleSpawns() {
+        var sim = SimulationState(canvasSize: 64)
+        sim.cpuLoad = 1.0       // would normally spawn aggressively
+        sim.memoryUsage = 0.5
+        sim.reduceMotion = true
+        for _ in 0..<200 { sim.step() }
+        #expect(sim.bubbleSystem.bubbles.isEmpty)
+    }
+
+    @Test("reduceMotion freezes duck x and bobAngle")
+    func reduceMotionFreezesDuck() {
+        var sim = SimulationState(canvasSize: 64)
+        sim.reduceMotion = true
+        sim.memoryUsage = 0.4
+        let originalX = sim.duck.x
+        let originalBob = sim.duck.bobAngle
+        for _ in 0..<50 { sim.step() }
+        #expect(sim.duck.x == originalX)
+        #expect(sim.duck.bobAngle == originalBob)
+    }
+
+    @Test("reduceMotion still makes water track memory target")
+    func reduceMotionWaterTracksMemory() {
+        var sim = SimulationState(canvasSize: 64)
+        sim.reduceMotion = true
+        sim.memoryUsage = 0.9
+        for _ in 0..<500 { sim.step() }
+        let avg = sim.water.levels.reduce(0, +) / Double(sim.water.levels.count)
+        #expect(abs(avg - 0.9) < 0.1)
+    }
+
+    @Test("reduceMotion freezes blink progress")
+    func reduceMotionFreezesBlink() {
+        var sim = SimulationState(canvasSize: 64)
+        sim.reduceMotion = true
+        let originalTimeUntilBlink = sim.duck.blink.timeUntilBlink
+        for _ in 0..<50 { sim.step() }
+        #expect(sim.duck.blink.timeUntilBlink == originalTimeUntilBlink)
+    }
+
     @Test("water converges toward memory target over time")
     func waterConvergesToMemory() {
         var sim = SimulationState(canvasSize: 64)

@@ -16,13 +16,18 @@ final class DockTileController {
 
     private var frameTimer: Timer?
     private var metricsTimer: Timer?
+    private var accessibilityObserver: NSObjectProtocol?
 
     /// Active GIF recording, if any. Set by `startRecording`, cleared when
     /// the recorder reports completion (or when explicitly cancelled).
     private var gifRecorder: GIFRecorder?
 
-    /// Target frame interval in seconds (~60fps like wmbubble's 15ms delay)
-    private let frameInterval: TimeInterval = 1.0 / 60.0
+    /// Normal frame interval (~60fps like wmbubble's 15ms delay)
+    private let normalFrameInterval: TimeInterval = 1.0 / 60.0
+    /// Reduced-motion frame interval (2fps) — honors the accessibility
+    /// preference (aiesrocks/bubble-duck#15). At 2fps the water level still
+    /// tracks RAM smoothly enough without being motion-sickness inducing.
+    private let reducedMotionFrameInterval: TimeInterval = 0.5
     /// How often to poll system metrics (every ~1 second)
     private let metricsInterval: TimeInterval = 1.0
 
@@ -69,12 +74,11 @@ final class DockTileController {
     }
 
     func start() {
-        frameTimer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.tick()
-            }
-        }
-        RunLoop.main.add(frameTimer!, forMode: .common)
+        // Pick up current Reduce Motion setting before scheduling the first
+        // frame, and subscribe for live changes.
+        simulation.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        installFrameTimer()
+        observeAccessibilityChanges()
 
         metricsTimer = Timer.scheduledTimer(withTimeInterval: metricsInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -91,6 +95,46 @@ final class DockTileController {
         frameTimer = nil
         metricsTimer?.invalidate()
         metricsTimer = nil
+        if let observer = accessibilityObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            accessibilityObserver = nil
+        }
+    }
+
+    /// Install (or reinstall) the frame timer at whatever rate matches the
+    /// current Reduce Motion state.
+    private func installFrameTimer() {
+        frameTimer?.invalidate()
+        let interval = simulation.reduceMotion
+            ? reducedMotionFrameInterval
+            : normalFrameInterval
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tick()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        frameTimer = timer
+    }
+
+    private func observeAccessibilityChanges() {
+        accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.accessibilityOptionsChanged()
+            }
+        }
+    }
+
+    private func accessibilityOptionsChanged() {
+        let newValue = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard newValue != simulation.reduceMotion else { return }
+        simulation.reduceMotion = newValue
+        // Reinstall the timer so the frame rate matches the new mode.
+        installFrameTimer()
     }
 
     private func tick() {

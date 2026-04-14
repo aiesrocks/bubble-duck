@@ -15,6 +15,14 @@ public struct SimulationState: Sendable {
     /// into the sub-systems.
     public private(set) var config: SimulationConfig
 
+    /// Honors the system accessibility "Reduce Motion" preference
+    /// (aiesrocks/bubble-duck#15). When true:
+    ///   - Bubble spawning is suppressed (existing bubbles finish rising and pop)
+    ///   - The agent stops drifting / bobbing / blinking, just follows water level
+    ///   - Water still moves toward its memory target so the level tracks RAM
+    /// Driven from the macOS layer via NSWorkspace notifications.
+    public var reduceMotion: Bool = false
+
     // Current system metrics (0.0...1.0)
     public var cpuLoad: Double = 0.0
     public var memoryUsage: Double = 0.0
@@ -51,27 +59,32 @@ public struct SimulationState: Sendable {
 
     /// Advance the simulation by one frame.
     public mutating func step() {
-        // Update water target from memory usage
+        // Update water target from memory usage — runs in every mode so the
+        // water level still tracks RAM even with Reduce Motion on.
         water.targetLevel = memoryUsage
 
-        // Maybe spawn bubbles based on CPU
-        if let col = bubbleSystem.maybeSpawn(cpuLoad: cpuLoad, columnCount: water.columnCount) {
-            water.displace(column: col, amount: -bubbleSystem.rippleStrength)
+        // Bubble spawning is motion → skip when Reduce Motion is on.
+        if !reduceMotion {
+            if let col = bubbleSystem.maybeSpawn(cpuLoad: cpuLoad, columnCount: water.columnCount) {
+                water.displace(column: col, amount: -bubbleSystem.rippleStrength)
+            }
         }
 
-        // Step bubbles, get popped columns
+        // Step existing bubbles in both modes so any currently on-screen
+        // bubbles finish rising and naturally drain the tank.
         let popped = bubbleSystem.step(waterLevels: water.levels)
         for col in popped {
             water.displace(column: col, amount: bubbleSystem.rippleStrength)
         }
 
-        // Step water physics
+        // Step water physics so levels smoothly track their memory target.
         water.step()
 
-        // Step duck — if it bounces off an edge, emit a small splash
-        // (aiesrocks/bubble-duck#6): a burst of micro-bubbles + a downward
-        // water displacement at the agent's column.
-        if let splashColumn = duck.step(waterLevels: water.levels) {
+        // Agent motion: full step normally, pure water-following when
+        // Reduce Motion is on (no drift, no bob, no blink, no splash).
+        if reduceMotion {
+            duck.followWater(waterLevels: water.levels)
+        } else if let splashColumn = duck.step(waterLevels: water.levels) {
             let surface = water.levels[splashColumn]
             bubbleSystem.spawnBurst(x: duck.x, nearSurface: surface, count: 3)
             water.displace(column: splashColumn, amount: -bubbleSystem.rippleStrength * 0.6)
@@ -141,5 +154,15 @@ public struct DuckState: Sendable {
         blink.step(deltaTime: 1.0 / 60.0)
 
         return splashColumn
+    }
+
+    /// Update only the agent's vertical position to track the water surface,
+    /// without drifting, bobbing, or blinking. Used when the system
+    /// accessibility "Reduce Motion" preference is on (aiesrocks/bubble-duck#15).
+    public mutating func followWater(waterLevels: [Double]) {
+        guard enabled, !waterLevels.isEmpty else { return }
+        let col = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
+        y = waterLevels[col]
+        isUpsideDown = y > 0.95
     }
 }
