@@ -8,28 +8,11 @@ struct BubbleDuckApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // Minimal window — the real UI is the dock tile
-        Window("BubbleDuck", id: "main") {
-            ContentView()
+        // Standard macOS Settings scene — opened via Cmd-, or by clicking
+        // the dock icon (wired up in AppDelegate). The dock tile itself is
+        // the app's primary UI, so there's no main Window scene.
+        Settings {
+            SettingsView(store: appDelegate.configStore)
         }
-        .defaultSize(width: 300, height: 300)
-    }
-}
-
-struct ContentView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "drop.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.blue)
-            Text("BubbleDuck")
-                .font(.title)
-            Text("System monitor running in your Dock")
-                .foregroundStyle(.secondary)
-            Text("CPU → bubbles · Memory → water level · Swap → color")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(24)
     }
 }
