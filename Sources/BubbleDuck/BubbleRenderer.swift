@@ -349,6 +349,33 @@ struct BubbleRenderer {
         return agentSize
     }
 
+    // MARK: Blink rendering helpers
+
+    /// Draws an eye-shaped ellipse that squashes vertically when the agent
+    /// blinks. `openness` is BlinkState.openness (0 = closed, 1 = open);
+    /// the eye never mathematically vanishes — a thin line remains so the
+    /// squash reads naturally. Horizontal center is preserved via the x/y
+    /// origin convention already used by each agent's draw code.
+    private func fillEye(_ context: CGContext,
+                         x: Double, y: Double, width: Double, height: Double,
+                         openness: Double) {
+        let o = max(0.05, openness)
+        let h = height * o
+        let centerY = y + height / 2
+        context.fillEllipse(in: CGRect(x: x, y: centerY - h / 2, width: width, height: h))
+    }
+
+    /// Like fillEye, but the highlight is hidden once the eye is mostly
+    /// closed so no stray sparkle hovers mid-blink.
+    private func fillEyeGlint(_ context: CGContext,
+                              x: Double, y: Double, width: Double, height: Double,
+                              openness: Double) {
+        guard openness > 0.4 else { return }
+        let h = height * openness
+        let centerY = y + height / 2
+        context.fillEllipse(in: CGRect(x: x, y: centerY - h / 2, width: width, height: h))
+    }
+
     private func drawRubberDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
         _ = beginAgent(context: context, duck: duck, size: size)
 
@@ -393,12 +420,13 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.58, y: 0.22, width: 0.32, height: 0.06))
 
         // Eye
+        let o = duck.blink.openness
         context.setFillColor(cgColor(theme.duckEye))
-        context.fillEllipse(in: CGRect(x: 0.44, y: 0.38, width: 0.08, height: 0.08))
+        fillEye(context, x: 0.44, y: 0.38, width: 0.08, height: 0.08, openness: o)
 
         // Eye glint
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-        context.fillEllipse(in: CGRect(x: 0.47, y: 0.42, width: 0.025, height: 0.025))
+        fillEyeGlint(context, x: 0.47, y: 0.42, width: 0.025, height: 0.025, openness: o)
 
         context.restoreGState()
     }
@@ -455,7 +483,8 @@ struct BubbleRenderer {
 
         // Eye
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.42, y: 0.32, width: 0.07, height: 0.07))
+        fillEye(context, x: 0.42, y: 0.32, width: 0.07, height: 0.07,
+                openness: duck.blink.openness)
 
         context.restoreGState()
     }
@@ -492,14 +521,15 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.44, y: 0.2, width: 0.1, height: 0.1))
 
         // Small happy eyes
+        let oOtter = duck.blink.openness
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.35, y: 0.12, width: 0.06, height: 0.06))
-        context.fillEllipse(in: CGRect(x: 0.45, y: 0.12, width: 0.06, height: 0.06))
+        fillEye(context, x: 0.35, y: 0.12, width: 0.06, height: 0.06, openness: oOtter)
+        fillEye(context, x: 0.45, y: 0.12, width: 0.06, height: 0.06, openness: oOtter)
 
         // Eye glints
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8))
-        context.fillEllipse(in: CGRect(x: 0.37, y: 0.14, width: 0.02, height: 0.02))
-        context.fillEllipse(in: CGRect(x: 0.47, y: 0.14, width: 0.02, height: 0.02))
+        fillEyeGlint(context, x: 0.37, y: 0.14, width: 0.02, height: 0.02, openness: oOtter)
+        fillEyeGlint(context, x: 0.47, y: 0.14, width: 0.02, height: 0.02, openness: oOtter)
 
         // Little paws resting on belly
         context.setFillColor(furColor)
@@ -539,12 +569,13 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.3, y: 0.0, width: 0.28, height: 0.24))
 
         // Eye
+        let oTurtle = duck.blink.openness
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.46, y: 0.13, width: 0.06, height: 0.06))
+        fillEye(context, x: 0.46, y: 0.13, width: 0.06, height: 0.06, openness: oTurtle)
 
         // Eye glint
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
-        context.fillEllipse(in: CGRect(x: 0.48, y: 0.15, width: 0.02, height: 0.02))
+        fillEyeGlint(context, x: 0.48, y: 0.15, width: 0.02, height: 0.02, openness: oTurtle)
 
         // Front flippers — bigger, paddle-shaped
         context.setFillColor(skinColor)
@@ -576,19 +607,20 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.02, y: -0.02, width: 0.48, height: 0.35))
 
         // Big bulging eyes (on top of head) — bright lime
+        let oFrog = duck.blink.openness
         context.setFillColor(CGColor(red: 0.55, green: 0.9, blue: 0.15, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.1, y: 0.24, width: 0.18, height: 0.18))
-        context.fillEllipse(in: CGRect(x: 0.3, y: 0.24, width: 0.18, height: 0.18))
+        fillEye(context, x: 0.1, y: 0.24, width: 0.18, height: 0.18, openness: oFrog)
+        fillEye(context, x: 0.3, y: 0.24, width: 0.18, height: 0.18, openness: oFrog)
 
         // Pupils
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.15, y: 0.29, width: 0.08, height: 0.08))
-        context.fillEllipse(in: CGRect(x: 0.35, y: 0.29, width: 0.08, height: 0.08))
+        fillEye(context, x: 0.15, y: 0.29, width: 0.08, height: 0.08, openness: oFrog)
+        fillEye(context, x: 0.35, y: 0.29, width: 0.08, height: 0.08, openness: oFrog)
 
         // Eye glints
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
-        context.fillEllipse(in: CGRect(x: 0.18, y: 0.33, width: 0.03, height: 0.03))
-        context.fillEllipse(in: CGRect(x: 0.38, y: 0.33, width: 0.03, height: 0.03))
+        fillEyeGlint(context, x: 0.18, y: 0.33, width: 0.03, height: 0.03, openness: oFrog)
+        fillEyeGlint(context, x: 0.38, y: 0.33, width: 0.03, height: 0.03, openness: oFrog)
 
         // Wide smile
         context.setStrokeColor(CGColor(red: 0.2, green: 0.5, blue: 0.0, alpha: 1))
@@ -640,19 +672,20 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.08, y: 0.14, width: 0.06, height: 0.06))
 
         // Eyes — big, sitting on top of head
+        let oHippo = duck.blink.openness
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-        context.fillEllipse(in: CGRect(x: -0.12, y: 0.08, width: 0.14, height: 0.14))
-        context.fillEllipse(in: CGRect(x: 0.02, y: 0.08, width: 0.14, height: 0.14))
+        fillEye(context, x: -0.12, y: 0.08, width: 0.14, height: 0.14, openness: oHippo)
+        fillEye(context, x: 0.02, y: 0.08, width: 0.14, height: 0.14, openness: oHippo)
 
         // Pupils
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: -0.07, y: 0.12, width: 0.07, height: 0.07))
-        context.fillEllipse(in: CGRect(x: 0.06, y: 0.12, width: 0.07, height: 0.07))
+        fillEye(context, x: -0.07, y: 0.12, width: 0.07, height: 0.07, openness: oHippo)
+        fillEye(context, x: 0.06, y: 0.12, width: 0.07, height: 0.07, openness: oHippo)
 
         // Eye glints
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.6))
-        context.fillEllipse(in: CGRect(x: -0.04, y: 0.15, width: 0.025, height: 0.025))
-        context.fillEllipse(in: CGRect(x: 0.09, y: 0.15, width: 0.025, height: 0.025))
+        fillEyeGlint(context, x: -0.04, y: 0.15, width: 0.025, height: 0.025, openness: oHippo)
+        fillEyeGlint(context, x: 0.09, y: 0.15, width: 0.025, height: 0.025, openness: oHippo)
 
         context.restoreGState()
     }
