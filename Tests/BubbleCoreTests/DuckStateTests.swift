@@ -80,4 +80,13 @@ struct DuckStateTests {
         #expect(duck.bobAngle < 2 * .pi)
         #expect(duck.bobAngle >= 0)
     }
+
+    @Test("step advances the blink idle countdown")
+    func stepAdvancesBlink() {
+        var duck = DuckState()
+        let levels = Array(repeating: 0.5, count: 16)
+        let before = duck.blink.timeUntilBlink
+        duck.step(waterLevels: levels)
+        #expect(duck.blink.timeUntilBlink < before)
+    }
 }

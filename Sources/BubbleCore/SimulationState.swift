@@ -90,6 +90,10 @@ public struct DuckState: Sendable {
     /// 0 = gentle drift, 1 = zipping across.
     public var speedFactor: Double = 0.0
 
+    /// Eyelid animation state. Each new agent gets a randomized initial
+    /// interval so blinks don't sync when the agent type is swapped.
+    public var blink: BlinkState = BlinkState(initialInterval: Double.random(in: 1.0...3.5))
+
     /// Base drift speed (gentle idle movement)
     private let baseSpeed: Double = 0.0005
     /// Maximum additional speed from the metric
@@ -120,5 +124,8 @@ public struct DuckState: Sendable {
 
         // Flip upside down if water is very high (>95%)
         isUpsideDown = y > 0.95
+
+        // Advance eyelid animation at the fixed simulation step rate.
+        blink.step(deltaTime: 1.0 / 60.0)
     }
 }
