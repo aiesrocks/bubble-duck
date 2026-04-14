@@ -189,6 +189,8 @@ final class DockTileController {
         simulation.swapUsage = snapshot.swapUsage
         // Day/night sky (#3) — pulled from the local clock once per tick.
         simulation.timeOfDay = TimeOfDay.fraction(from: Date())
+        // Battery tint (#17) — nil for desktop Macs, forwarded to the renderer.
+        simulation.batteryFraction = snapshot.batteryFraction
 
         // Feed overlay data
         simulation.overlay.loadAverage1 = snapshot.loadAverage1

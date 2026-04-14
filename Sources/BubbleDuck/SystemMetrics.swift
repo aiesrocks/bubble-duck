@@ -4,6 +4,7 @@
 import Foundation
 import Darwin
 import IOKit
+import IOKit.ps
 import BubbleCore
 
 /// Reads CPU, memory, and swap metrics from macOS kernel APIs.
@@ -42,6 +43,11 @@ final class SystemMetrics {
         // real-time pressure (unlike raw swapUsage, which doesn't clear).
         var memoryTightness: Double = 0
         var memoryPressureZone: MemoryPressure.Zone = .healthy
+
+        // Battery fraction 0...1 (aiesrocks/bubble-duck#17). nil when the
+        // machine has no battery (desktop Mac) so the renderer can skip
+        // tinting rather than falling back to some arbitrary default.
+        var batteryFraction: Double? = nil
     }
 
     func read() -> Snapshot {
@@ -73,8 +79,41 @@ final class SystemMetrics {
             diskIOPS: diskOps,
             gpuUtilization: readGPUUtilization(),
             memoryTightness: tightness,
-            memoryPressureZone: MemoryPressure.zone(for: tightness)
+            memoryPressureZone: MemoryPressure.zone(for: tightness),
+            batteryFraction: readBatteryFraction()
         )
+    }
+
+    // MARK: - Battery (IOPS power-source info)
+
+    /// Returns the battery's current-capacity fraction (0...1), or `nil` on
+    /// desktop Macs with no battery. Reads `IOPSCopyPowerSourcesInfo` —
+    /// same API Activity Monitor uses, no entitlements required.
+    private func readBatteryFraction() -> Double? {
+        guard let infoRef = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+            return nil
+        }
+        guard let sourcesRef = IOPSCopyPowerSourcesList(infoRef)?.takeRetainedValue() else {
+            return nil
+        }
+        let sources = sourcesRef as [CFTypeRef]
+        for source in sources {
+            guard let desc = IOPSGetPowerSourceDescription(infoRef, source)?
+                .takeUnretainedValue() as? [String: Any] else {
+                continue
+            }
+            // Only count internal batteries — ignore UPS / external sources.
+            guard (desc[kIOPSTypeKey] as? String) == kIOPSInternalBatteryType else {
+                continue
+            }
+            guard let current = desc[kIOPSCurrentCapacityKey] as? Int,
+                  let maxCap = desc[kIOPSMaxCapacityKey] as? Int,
+                  maxCap > 0 else {
+                continue
+            }
+            return min(1.0, max(0.0, Double(current) / Double(maxCap)))
+        }
+        return nil
     }
 
     // MARK: - CPU (from host_statistics, like wmbubble reads /proc/stat)

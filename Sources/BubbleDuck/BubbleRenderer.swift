@@ -38,7 +38,12 @@ struct BubbleRenderer {
         // Sky (air) = local time of day; water = swap pressure.
         // See ColorTheme / SimulationState.timeOfDay for the mapping.
         let skyColor = theme.skyColor(timeOfDay: state.timeOfDay)
-        let liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
+        var liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
+        // Low battery tints the water — desaturation in the warning zone,
+        // apocalyptic red below 10% (aiesrocks/bubble-duck#17).
+        if let battery = state.batteryFraction {
+            liquidColor = BatteryTint.apply(to: liquidColor, batteryFraction: battery)
+        }
         let s = Double(size)
 
         // Draw water tank column by column

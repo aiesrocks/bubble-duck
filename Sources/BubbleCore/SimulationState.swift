@@ -51,6 +51,12 @@ public struct SimulationState: Sendable {
     /// `TimeOfDay.fraction(from:)`.
     public var timeOfDay: Double = 0.5
 
+    /// Battery fraction 0...1, or nil if no battery is present
+    /// (desktop Mac / external source). The renderer applies
+    /// `BatteryTint.apply(to:batteryFraction:)` to the water color when
+    /// this is non-nil (aiesrocks/bubble-duck#17).
+    public var batteryFraction: Double? = nil
+
     /// Size of the rendering canvas in points
     public let canvasSize: Int
 
