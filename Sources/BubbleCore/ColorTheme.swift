@@ -4,7 +4,7 @@
 import Foundation
 
 /// RGB color with components in 0.0...1.0 range.
-public struct SimColor: Sendable, Equatable {
+public struct SimColor: Sendable, Equatable, Codable {
     public var r: Double
     public var g: Double
     public var b: Double
@@ -35,7 +35,7 @@ public struct SimColor: Sendable, Equatable {
 
 /// Color theme matching wmbubble's configurable color scheme.
 /// Colors interpolate between noSwap and maxSwap variants based on swap usage.
-public struct ColorTheme: Sendable {
+public struct ColorTheme: Sendable, Equatable, Codable {
     public var airNoSwap: SimColor
     public var airMaxSwap: SimColor
     public var liquidNoSwap: SimColor
