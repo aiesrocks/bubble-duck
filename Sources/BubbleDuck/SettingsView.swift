@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // BubbleDuck — settings UI bound to ConfigStore
 
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import BubbleCore
 
 struct SettingsView: View {
     @Bindable var store: ConfigStore
+    @State private var themeIOError: String? = nil
 
     var body: some View {
         Form {
@@ -36,6 +39,32 @@ struct SettingsView: View {
                     ForEach(SpeedMetric.allCases, id: \.self) { metric in
                         Text(metric.rawValue).tag(metric)
                     }
+                }
+            }
+
+            Section("Theme") {
+                Picker("Preset", selection: Binding(
+                    get: { "custom" },  // we don't persist preset id; always shows Custom unless user picks one
+                    set: { newId in
+                        if let preset = ThemePresets.preset(id: newId) {
+                            store.config.theme = preset.theme
+                        }
+                    }
+                )) {
+                    Text("Custom / (current)").tag("custom")
+                    ForEach(ThemePresets.all, id: \.id) { preset in
+                        Text(preset.name).tag(preset.id)
+                    }
+                }
+
+                HStack {
+                    Button("Export Theme…") { exportTheme() }
+                    Button("Import Theme…") { importTheme() }
+                }
+                if let err = themeIOError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
             }
 
@@ -70,6 +99,47 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 380, idealWidth: 420, minHeight: 520, idealHeight: 620)
+    }
+
+    // MARK: - Theme import / export (aiesrocks/bubble-duck#11)
+
+    private func exportTheme() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "BubbleDuckTheme.json"
+        panel.canCreateDirectories = true
+        panel.title = "Export BubbleDuck Theme"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(store.config.theme)
+                try data.write(to: url)
+                themeIOError = nil
+            } catch {
+                themeIOError = "Export failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func importTheme() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "Import BubbleDuck Theme"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let theme = try JSONDecoder().decode(ColorTheme.self, from: data)
+                store.config.theme = theme
+                themeIOError = nil
+            } catch {
+                themeIOError = "Import failed: \(error.localizedDescription)"
+            }
+        }
     }
 }
 
