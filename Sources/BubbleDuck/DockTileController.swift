@@ -10,8 +10,14 @@ final class DockTileController {
     private var simulation: SimulationState
     private let renderer: BubbleRenderer
     private let metrics: SystemMetrics
-    private var displayLink: CVDisplayLink?
-    private var timer: Timer?
+
+    /// Single reusable image view installed as the dock tile's content view.
+    /// Recreating an NSImageView every frame was wasteful and could flicker;
+    /// we just mutate its `.image` and call `dockTile.display()`.
+    private let imageView = NSImageView()
+
+    private var frameTimer: Timer?
+    private var metricsTimer: Timer?
 
     /// Target frame interval in seconds (~60fps like wmbubble's 15ms delay)
     private let frameInterval: TimeInterval = 1.0 / 60.0
@@ -22,48 +28,40 @@ final class DockTileController {
         simulation = SimulationState(canvasSize: 256)
         renderer = BubbleRenderer(size: 256)
         metrics = SystemMetrics()
+
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        NSApplication.shared.dockTile.contentView = imageView
     }
 
     func start() {
-        // Start simulation timer
-        timer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] _ in
+        frameTimer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
             }
         }
-        RunLoop.main.add(timer!, forMode: .common)
+        RunLoop.main.add(frameTimer!, forMode: .common)
 
-        // Start metrics polling on a background queue
-        startMetricsPolling()
-
-        // Initial metrics read
-        updateMetrics()
-    }
-
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    private func tick() {
-        simulation.step()
-        let image = renderer.render(state: simulation)
-        updateDockTile(with: image)
-    }
-
-    private func updateDockTile(with image: NSImage) {
-        let dockTile = NSApplication.shared.dockTile
-        let imageView = NSImageView(image: image)
-        dockTile.contentView = imageView
-        dockTile.display()
-    }
-
-    private func startMetricsPolling() {
-        Timer.scheduledTimer(withTimeInterval: metricsInterval, repeats: true) { [weak self] _ in
+        metricsTimer = Timer.scheduledTimer(withTimeInterval: metricsInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateMetrics()
             }
         }
+
+        // Initial metrics read so the first frame isn't all zeros
+        updateMetrics()
+    }
+
+    func stop() {
+        frameTimer?.invalidate()
+        frameTimer = nil
+        metricsTimer?.invalidate()
+        metricsTimer = nil
+    }
+
+    private func tick() {
+        simulation.step()
+        imageView.image = renderer.render(state: simulation)
+        NSApplication.shared.dockTile.display()
     }
 
     private func updateMetrics() {
