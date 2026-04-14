@@ -119,4 +119,67 @@ struct DuckStateTests {
         let splash = duck.step(waterLevels: levels)
         #expect(splash == nil)
     }
+
+    // MARK: - Idle sleep (aiesrocks/bubble-duck#5)
+
+    @Test("sleepiness climbs when CPU is below the idle threshold")
+    func sleepinessClimbsWhenIdle() {
+        var duck = DuckState()
+        let levels = Array(repeating: 0.5, count: 16)
+        for _ in 0..<60 {
+            duck.step(waterLevels: levels, cpuLoad: 0.02)
+        }
+        #expect(duck.sleepiness > 0.0)
+    }
+
+    @Test("sleepiness stays 0 when CPU is above the idle threshold")
+    func sleepinessStaysZeroUnderLoad() {
+        var duck = DuckState()
+        let levels = Array(repeating: 0.5, count: 16)
+        for _ in 0..<60 {
+            duck.step(waterLevels: levels, cpuLoad: 0.5)
+        }
+        #expect(duck.sleepiness == 0.0)
+    }
+
+    @Test("sleepiness drops rapidly on a CPU spike")
+    func sleepinessDropsOnSpike() {
+        var duck = DuckState()
+        duck.sleepiness = 1.0
+        let levels = Array(repeating: 0.5, count: 16)
+        // A single step at high CPU should already noticeably reduce sleepiness
+        duck.step(waterLevels: levels, cpuLoad: 0.8)
+        #expect(duck.sleepiness < 1.0)
+    }
+
+    @Test("sleepiness reaches 1.0 after ~30s of idle")
+    func sleepinessReachesFullAfter30s() {
+        var duck = DuckState()
+        let levels = Array(repeating: 0.5, count: 16)
+        // 31s worth of 1/60s steps → enough to saturate
+        for _ in 0..<Int(31 * 60) {
+            duck.step(waterLevels: levels, cpuLoad: 0.0)
+        }
+        #expect(duck.sleepiness == 1.0)
+    }
+
+    @Test("effective eyelid openness is unaffected at low sleepiness")
+    func effectiveOpennessAwake() {
+        var duck = DuckState()
+        duck.sleepiness = 0.0
+        // blink.openness defaults to 1.0
+        #expect(duck.effectiveEyelidOpenness == 1.0)
+    }
+
+    @Test("effective eyelid openness collapses when fully asleep")
+    func effectiveOpennessAsleep() {
+        var duck = DuckState()
+        duck.sleepiness = 1.0
+        #expect(duck.effectiveEyelidOpenness == 0.0)
+    }
+
+    @Test("idle threshold matches the approved spec (10%)")
+    func idleThresholdMatchesSpec() {
+        #expect(DuckState.idleCPUThreshold == 0.10)
+    }
 }

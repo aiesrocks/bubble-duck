@@ -81,10 +81,10 @@ public struct SimulationState: Sendable {
         water.step()
 
         // Agent motion: full step normally, pure water-following when
-        // Reduce Motion is on (no drift, no bob, no blink, no splash).
+        // Reduce Motion is on (no drift, no bob, no blink, no splash, no sleep update).
         if reduceMotion {
             duck.followWater(waterLevels: water.levels)
-        } else if let splashColumn = duck.step(waterLevels: water.levels) {
+        } else if let splashColumn = duck.step(waterLevels: water.levels, cpuLoad: cpuLoad) {
             let surface = water.levels[splashColumn]
             bubbleSystem.spawnBurst(x: duck.x, nearSurface: surface, count: 3)
             water.displace(column: splashColumn, amount: -bubbleSystem.rippleStrength * 0.6)
@@ -113,6 +113,23 @@ public struct DuckState: Sendable {
     /// interval so blinks don't sync when the agent type is swapped.
     public var blink: BlinkState = BlinkState(initialInterval: Double.random(in: 1.0...3.5))
 
+    /// Idle-sleep progress (aiesrocks/bubble-duck#5). Climbs while CPU is
+    /// below `idleCPUThreshold`, drops fast when CPU spikes again. Fully
+    /// asleep (1.0) forces eyes shut via `effectiveEyelidOpenness` and
+    /// invites the "Z" sprite in the renderer.
+    public var sleepiness: Double = 0.0
+
+    // MARK: - Sleep tuning (constants, not user-facing config yet)
+
+    /// CPU load below which the system is "idle". Per aiesrocks/bubble-duck#5
+    /// (user feedback on the issue bumped this from 5% to 10%).
+    public static let idleCPUThreshold: Double = 0.10
+    /// Wall-clock seconds of continuous idle before the agent is fully asleep.
+    public static let secondsToFullSleep: Double = 30.0
+    /// Wake-up happens ~10× faster than sleep build-up so a CPU spike
+    /// visibly pops the eyes open within a few frames.
+    public static let wakeFactor: Double = 10.0
+
     /// Base drift speed (gentle idle movement)
     private let baseSpeed: Double = 0.0005
     /// Maximum additional speed from the metric
@@ -120,12 +137,41 @@ public struct DuckState: Sendable {
 
     public init() {}
 
+    /// Effective eyelid openness combining blink animation and sleepiness.
+    /// 1.0 = fully open, 0.0 = fully closed. The renderer uses this
+    /// (via `fillEye` / `fillEyeGlint`) so sleepy eyes ride on top of the
+    /// normal blink machinery.
+    public var effectiveEyelidOpenness: Double {
+        let sleepAttenuation = DuckState.smoothstep(from: 0.5, to: 1.0, value: sleepiness)
+        return blink.openness * (1.0 - sleepAttenuation)
+    }
+
+    /// Smoothstep easing between `from` and `to` (returns 0 below `from`,
+    /// 1 above `to`, smooth cubic curve in between).
+    static func smoothstep(from: Double, to: Double, value: Double) -> Double {
+        guard to > from else { return 0 }
+        let t = max(0, min(1, (value - from) / (to - from)))
+        return t * t * (3 - 2 * t)
+    }
+
     /// Advance the duck by one frame. Returns the water-column index where
     /// the agent just bounced off an edge, or `nil` if no bounce this frame.
     /// Callers can use the bounce column to trigger a splash / ripple.
+    ///
+    /// `cpuLoad` feeds the idle-sleep animation — below `idleCPUThreshold`
+    /// sleepiness rises toward 1.0; above it, sleepiness drops rapidly.
     @discardableResult
-    public mutating func step(waterLevels: [Double]) -> Int? {
+    public mutating func step(waterLevels: [Double], cpuLoad: Double = 0.0) -> Int? {
         guard enabled, !waterLevels.isEmpty else { return nil }
+
+        // Update sleepiness before motion so the blink animation's next step
+        // sees a consistent state. Fixed 1/60 dt matches the rest of the sim.
+        let dt = 1.0 / 60.0
+        if cpuLoad < DuckState.idleCPUThreshold {
+            sleepiness = min(1.0, sleepiness + dt / DuckState.secondsToFullSleep)
+        } else {
+            sleepiness = max(0.0, sleepiness - DuckState.wakeFactor * dt / DuckState.secondsToFullSleep)
+        }
 
         // Drift speed = base + metric-driven extra
         let currentSpeed = baseSpeed + speedFactor * maxExtraSpeed

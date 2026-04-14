@@ -74,6 +74,10 @@ struct BubbleRenderer {
         if state.duck.enabled {
             drawAgent(context: context, duck: state.duck, agentType: state.config.agentType,
                       theme: theme, size: s)
+            // Sleepy "Z" sprite drifts above the agent once sleepiness > 0.5
+            // (aiesrocks/bubble-duck#5). Drawn after the agent so it floats
+            // on top of the silhouette.
+            drawSleepZ(duck: state.duck, size: s)
         }
 
         // CPU gauge (always visible, like wmbubble)
@@ -378,6 +382,30 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: x, y: centerY - h / 2, width: width, height: h))
     }
 
+    /// Draws a floating "Z" above the agent once `sleepiness > 0.5`
+    /// (aiesrocks/bubble-duck#5). Alpha eases up smoothly between 0.5 and
+    /// 1.0 sleepiness so the Z fades in rather than pops. Uses AppKit text
+    /// rendering since it's cheap and easy to style.
+    private func drawSleepZ(duck: DuckState, size: Double) {
+        guard duck.sleepiness > 0.5 else { return }
+        let alpha = DuckState.smoothstep(from: 0.5, to: 1.0, value: duck.sleepiness) * 0.85
+        let dx = duck.x * size
+        let dy = duck.y * size
+        let bob = sin(duck.bobAngle) * 2.0
+        // Position the Z just above the agent's head, matching the sign
+        // convention the body path uses (positive local y = "away from water").
+        let zY = dy + bob + size * 0.18
+
+        let font = NSFont.systemFont(ofSize: size * 0.09, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor(white: 0.15, alpha: alpha)
+        ]
+        let str = NSAttributedString(string: "Z", attributes: attrs)
+        // `dx` is the agent's horizontal center; nudge left so the Z reads as centered.
+        str.draw(at: NSPoint(x: dx - size * 0.04, y: zY))
+    }
+
     private func drawRubberDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
         _ = beginAgent(context: context, duck: duck, size: size)
 
@@ -422,7 +450,7 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.58, y: 0.22, width: 0.32, height: 0.06))
 
         // Eye
-        let o = duck.blink.openness
+        let o = duck.effectiveEyelidOpenness
         context.setFillColor(cgColor(theme.duckEye))
         fillEye(context, x: 0.44, y: 0.38, width: 0.08, height: 0.08, openness: o)
 
@@ -486,7 +514,7 @@ struct BubbleRenderer {
         // Eye
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
         fillEye(context, x: 0.42, y: 0.32, width: 0.07, height: 0.07,
-                openness: duck.blink.openness)
+                openness: duck.effectiveEyelidOpenness)
 
         context.restoreGState()
     }
@@ -523,7 +551,7 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.44, y: 0.2, width: 0.1, height: 0.1))
 
         // Small happy eyes
-        let oOtter = duck.blink.openness
+        let oOtter = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
         fillEye(context, x: 0.35, y: 0.12, width: 0.06, height: 0.06, openness: oOtter)
         fillEye(context, x: 0.45, y: 0.12, width: 0.06, height: 0.06, openness: oOtter)
@@ -571,7 +599,7 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.3, y: 0.0, width: 0.28, height: 0.24))
 
         // Eye
-        let oTurtle = duck.blink.openness
+        let oTurtle = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
         fillEye(context, x: 0.46, y: 0.13, width: 0.06, height: 0.06, openness: oTurtle)
 
@@ -609,7 +637,7 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.02, y: -0.02, width: 0.48, height: 0.35))
 
         // Big bulging eyes (on top of head) — bright lime
-        let oFrog = duck.blink.openness
+        let oFrog = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 0.55, green: 0.9, blue: 0.15, alpha: 1))
         fillEye(context, x: 0.1, y: 0.24, width: 0.18, height: 0.18, openness: oFrog)
         fillEye(context, x: 0.3, y: 0.24, width: 0.18, height: 0.18, openness: oFrog)
@@ -674,7 +702,7 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.08, y: 0.14, width: 0.06, height: 0.06))
 
         // Eyes — big, sitting on top of head
-        let oHippo = duck.blink.openness
+        let oHippo = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
         fillEye(context, x: -0.12, y: 0.08, width: 0.14, height: 0.14, openness: oHippo)
         fillEye(context, x: 0.02, y: 0.08, width: 0.14, height: 0.14, openness: oHippo)
