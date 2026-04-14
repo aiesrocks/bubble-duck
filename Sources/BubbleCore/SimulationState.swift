@@ -68,8 +68,14 @@ public struct SimulationState: Sendable {
         // Step water physics
         water.step()
 
-        // Step duck
-        duck.step(waterLevels: water.levels)
+        // Step duck — if it bounces off an edge, emit a small splash
+        // (aiesrocks/bubble-duck#6): a burst of micro-bubbles + a downward
+        // water displacement at the agent's column.
+        if let splashColumn = duck.step(waterLevels: water.levels) {
+            let surface = water.levels[splashColumn]
+            bubbleSystem.spawnBurst(x: duck.x, nearSurface: surface, count: 3)
+            water.displace(column: splashColumn, amount: -bubbleSystem.rippleStrength * 0.6)
+        }
 
         // Animate overlay alpha
         overlay.stepAlpha()
@@ -101,8 +107,12 @@ public struct DuckState: Sendable {
 
     public init() {}
 
-    public mutating func step(waterLevels: [Double]) {
-        guard enabled, !waterLevels.isEmpty else { return }
+    /// Advance the duck by one frame. Returns the water-column index where
+    /// the agent just bounced off an edge, or `nil` if no bounce this frame.
+    /// Callers can use the bounce column to trigger a splash / ripple.
+    @discardableResult
+    public mutating func step(waterLevels: [Double]) -> Int? {
+        guard enabled, !waterLevels.isEmpty else { return nil }
 
         // Drift speed = base + metric-driven extra
         let currentSpeed = baseSpeed + speedFactor * maxExtraSpeed
@@ -110,8 +120,10 @@ public struct DuckState: Sendable {
         velocityX = direction * currentSpeed
 
         x += velocityX
+        var splashColumn: Int? = nil
         if x > 0.85 || x < 0.15 {
             velocityX = -velocityX
+            splashColumn = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
         }
 
         // Follow water surface
@@ -127,5 +139,7 @@ public struct DuckState: Sendable {
 
         // Advance eyelid animation at the fixed simulation step rate.
         blink.step(deltaTime: 1.0 / 60.0)
+
+        return splashColumn
     }
 }

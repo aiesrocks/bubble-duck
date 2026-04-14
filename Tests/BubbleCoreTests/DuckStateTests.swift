@@ -89,4 +89,34 @@ struct DuckStateTests {
         duck.step(waterLevels: levels)
         #expect(duck.blink.timeUntilBlink < before)
     }
+
+    @Test("step returns splash column when bouncing at right edge")
+    func stepReturnsSplashRight() {
+        var duck = DuckState()
+        duck.x = 0.84
+        duck.velocityX = 0.02  // ensure we cross 0.85 in a single step
+        let levels = Array(repeating: 0.5, count: 16)
+        let splash = duck.step(waterLevels: levels)
+        #expect(splash != nil)
+    }
+
+    @Test("step returns splash column when bouncing at left edge")
+    func stepReturnsSplashLeft() {
+        var duck = DuckState()
+        duck.x = 0.16
+        duck.velocityX = -0.02
+        let levels = Array(repeating: 0.5, count: 16)
+        let splash = duck.step(waterLevels: levels)
+        #expect(splash != nil)
+    }
+
+    @Test("no splash on a normal middle-of-tank step")
+    func noSplashMidTank() {
+        var duck = DuckState()
+        duck.x = 0.5
+        duck.velocityX = 0.01
+        let levels = Array(repeating: 0.5, count: 16)
+        let splash = duck.step(waterLevels: levels)
+        #expect(splash == nil)
+    }
 }

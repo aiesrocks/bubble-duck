@@ -47,6 +47,23 @@ public struct BubbleSystem: Sendable {
         return min(column, columnCount - 1)
     }
 
+    /// Spawn a burst of small bubbles near a surface point — used by the
+    /// agent-edge-bounce splash (aiesrocks/bubble-duck#6). Respects
+    /// `maxBubbles`; if the tank is full the burst silently shrinks.
+    @discardableResult
+    public mutating func spawnBurst(x: Double, nearSurface surface: Double, count: Int) -> Int {
+        let slots = max(0, maxBubbles - bubbles.count)
+        let n = min(slots, count)
+        guard n > 0 else { return 0 }
+        for _ in 0..<n {
+            let bx = min(0.99, max(0.01, x + Double.random(in: -0.04...0.04)))
+            // Start just below the water surface so the burst rises visibly.
+            let by = max(0.0, min(1.0, surface - Double.random(in: 0.02...0.06)))
+            bubbles.append(Bubble(x: bx, y: by, size: Double.random(in: 0.008...0.018)))
+        }
+        return n
+    }
+
     /// Advance all bubbles. Returns columns where bubbles popped (reached surface).
     public mutating func step(waterLevels: [Double]) -> [Int] {
         var poppedColumns: [Int] = []
