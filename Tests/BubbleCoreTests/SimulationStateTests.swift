@@ -47,6 +47,40 @@ struct SimulationStateTests {
         #expect(sim.bubbleSystem.bubbles.isEmpty)
     }
 
+    @Test("apply(config) propagates to water, bubble, and duck subsystems")
+    func applyPropagates() {
+        var sim = SimulationState(canvasSize: 64)
+        var cfg = SimulationConfig()
+        cfg.maxBubbles = 7
+        cfg.gravity = 0.005
+        cfg.rippleStrength = 0.01
+        cfg.volatility = 0.5
+        cfg.viscosity = 0.9
+        cfg.speedLimit = 2.0
+        cfg.duckEnabled = false
+
+        sim.apply(cfg)
+
+        #expect(sim.config == cfg)
+        #expect(sim.bubbleSystem.maxBubbles == 7)
+        #expect(sim.bubbleSystem.gravity == 0.005)
+        #expect(sim.bubbleSystem.rippleStrength == 0.01)
+        #expect(sim.water.volatility == 0.5)
+        #expect(sim.water.viscosity == 0.9)
+        #expect(sim.water.speedLimit == 2.0)
+        #expect(sim.duck.enabled == false)
+    }
+
+    @Test("init applies provided config")
+    func initAppliesConfig() {
+        var cfg = SimulationConfig()
+        cfg.maxBubbles = 3
+        cfg.duckEnabled = false
+        let sim = SimulationState(canvasSize: 64, config: cfg)
+        #expect(sim.bubbleSystem.maxBubbles == 3)
+        #expect(sim.duck.enabled == false)
+    }
+
     @Test("water converges toward memory target over time")
     func waterConvergesToMemory() {
         var sim = SimulationState(canvasSize: 64)

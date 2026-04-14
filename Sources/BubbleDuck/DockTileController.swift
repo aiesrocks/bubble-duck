@@ -24,13 +24,19 @@ final class DockTileController {
     /// How often to poll system metrics (every ~1 second)
     private let metricsInterval: TimeInterval = 1.0
 
-    init() {
-        simulation = SimulationState(canvasSize: 256)
+    init(config: SimulationConfig = .default) {
+        simulation = SimulationState(canvasSize: 256, config: config)
         renderer = BubbleRenderer(size: 256)
         metrics = SystemMetrics()
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         NSApplication.shared.dockTile.contentView = imageView
+    }
+
+    /// Push a new configuration into the running simulation. Takes effect on
+    /// the next frame — bubbles, water levels, and duck position are preserved.
+    func apply(_ config: SimulationConfig) {
+        simulation.apply(config)
     }
 
     func start() {

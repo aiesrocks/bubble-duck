@@ -6,13 +6,13 @@ import BubbleCore
 
 /// Renders a SimulationState into a CGImage, matching wmbubble's draw_watertank()
 /// and bubblebuf_colorspace() pipeline but at 256x256 resolution.
+/// The color theme is read from `state.config.theme` so live config changes
+/// take effect without having to rebuild the renderer.
 struct BubbleRenderer {
     let size: Int
-    let theme: ColorTheme
 
-    init(size: Int = 256, theme: ColorTheme = ColorTheme()) {
+    init(size: Int = 256) {
         self.size = size
-        self.theme = theme
     }
 
     func render(state: SimulationState) -> NSImage {
@@ -24,6 +24,7 @@ struct BubbleRenderer {
             return nsImage
         }
 
+        let theme = state.config.theme
         let airColor = theme.airColor(swapUsage: state.swapUsage)
         let liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
         let s = Double(size)
@@ -62,14 +63,14 @@ struct BubbleRenderer {
 
         // Draw duck
         if state.duck.enabled {
-            drawDuck(context: context, duck: state.duck, size: s)
+            drawDuck(context: context, duck: state.duck, theme: theme, size: s)
         }
 
         nsImage.unlockFocus()
         return nsImage
     }
 
-    private func drawDuck(context: CGContext, duck: DuckState, size: Double) {
+    private func drawDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
         let duckSize = size * 0.12
         let dx = duck.x * size
         let dy = (1.0 - duck.y) * size  // flip Y

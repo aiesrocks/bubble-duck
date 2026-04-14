@@ -9,6 +9,11 @@ public struct SimulationState: Sendable {
     public var bubbleSystem: BubbleSystem
     public var duck: DuckState
 
+    /// User-facing configuration (physics knobs, features, colors).
+    /// Mutating this directly has no effect; call `apply(_:)` to push changes
+    /// into the sub-systems.
+    public private(set) var config: SimulationConfig
+
     // Current system metrics (0.0...1.0)
     public var cpuLoad: Double = 0.0
     public var memoryUsage: Double = 0.0
@@ -17,13 +22,29 @@ public struct SimulationState: Sendable {
     /// Size of the rendering canvas in points
     public let canvasSize: Int
 
-    public init(canvasSize: Int = 256) {
+    public init(canvasSize: Int = 256, config: SimulationConfig = .default) {
         self.canvasSize = canvasSize
         // Use fewer columns than pixels for smoother waves
         let columnCount = canvasSize / 4
         self.water = WaterSimulation(columnCount: columnCount)
         self.bubbleSystem = BubbleSystem()
         self.duck = DuckState()
+        self.config = config
+        apply(config)
+    }
+
+    /// Push a new configuration into the water / bubble / duck sub-systems.
+    /// Safe to call any time — sub-system *state* (levels, bubbles, positions)
+    /// is preserved; only the tunable parameters are overwritten.
+    public mutating func apply(_ config: SimulationConfig) {
+        self.config = config
+        water.volatility = config.volatility
+        water.viscosity = config.viscosity
+        water.speedLimit = config.speedLimit
+        bubbleSystem.maxBubbles = config.maxBubbles
+        bubbleSystem.gravity = config.gravity
+        bubbleSystem.rippleStrength = config.rippleStrength
+        duck.enabled = config.duckEnabled
     }
 
     /// Advance the simulation by one frame.
