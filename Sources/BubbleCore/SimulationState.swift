@@ -45,6 +45,12 @@ public struct SimulationState: Sendable {
     public var memoryUsage: Double = 0.0
     public var swapUsage: Double = 0.0
 
+    /// Fraction-of-day used to blend between the theme's four sky anchors
+    /// (aiesrocks/bubble-duck#3). 0 = midnight, 0.25 = dawn, 0.5 = noon,
+    /// 0.75 = dusk. Updated from the macOS layer once per metrics tick via
+    /// `TimeOfDay.fraction(from:)`.
+    public var timeOfDay: Double = 0.5
+
     /// Size of the rendering canvas in points
     public let canvasSize: Int
 

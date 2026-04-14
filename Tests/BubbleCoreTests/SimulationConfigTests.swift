@@ -24,7 +24,7 @@ struct SimulationConfigTests {
         c.maxBubbles = 42
         c.gravity = 0.002
         c.duckEnabled = false
-        c.theme.airNoSwap = SimColor(r: 0.1, g: 0.2, b: 0.3)
+        c.theme.skyDawn = SimColor(r: 0.1, g: 0.2, b: 0.3)
 
         let data = try JSONEncoder().encode(c)
         let decoded = try JSONDecoder().decode(SimulationConfig.self, from: data)

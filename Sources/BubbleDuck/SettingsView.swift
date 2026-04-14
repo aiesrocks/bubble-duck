@@ -39,14 +39,22 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Colors") {
-                SimColorRow(label: "Air (no swap)", color: $store.config.theme.airNoSwap)
-                SimColorRow(label: "Air (max swap)", color: $store.config.theme.airMaxSwap)
-                SimColorRow(label: "Water (no swap)", color: $store.config.theme.liquidNoSwap)
+            Section("Sky (time of day)") {
+                SimColorRow(label: "Dawn",  color: $store.config.theme.skyDawn)
+                SimColorRow(label: "Noon",  color: $store.config.theme.skyNoon)
+                SimColorRow(label: "Dusk",  color: $store.config.theme.skyDusk)
+                SimColorRow(label: "Night", color: $store.config.theme.skyNight)
+            }
+
+            Section("Water (swap pressure)") {
+                SimColorRow(label: "Water (no swap)",  color: $store.config.theme.liquidNoSwap)
                 SimColorRow(label: "Water (max swap)", color: $store.config.theme.liquidMaxSwap)
+            }
+
+            Section("Agent & bubbles") {
                 SimColorRow(label: "Duck body", color: $store.config.theme.duckBody)
                 SimColorRow(label: "Duck bill", color: $store.config.theme.duckBill)
-                SimColorRow(label: "Duck eye", color: $store.config.theme.duckEye)
+                SimColorRow(label: "Duck eye",  color: $store.config.theme.duckEye)
                 SimColorRow(label: "Bubble", color: $store.config.theme.bubbleColor,
                             supportsOpacity: true)
             }

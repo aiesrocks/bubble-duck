@@ -187,6 +187,8 @@ final class DockTileController {
         simulation.cpuLoad = snapshot.cpuLoad
         simulation.memoryUsage = snapshot.memoryUsage
         simulation.swapUsage = snapshot.swapUsage
+        // Day/night sky (#3) — pulled from the local clock once per tick.
+        simulation.timeOfDay = TimeOfDay.fraction(from: Date())
 
         // Feed overlay data
         simulation.overlay.loadAverage1 = snapshot.loadAverage1

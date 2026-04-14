@@ -35,7 +35,9 @@ struct BubbleRenderer {
         }
 
         let theme = state.config.theme
-        let airColor = theme.airColor(swapUsage: state.swapUsage)
+        // Sky (air) = local time of day; water = swap pressure.
+        // See ColorTheme / SimulationState.timeOfDay for the mapping.
+        let skyColor = theme.skyColor(timeOfDay: state.timeOfDay)
         let liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
         let s = Double(size)
 
@@ -52,8 +54,8 @@ struct BubbleRenderer {
             context.setFillColor(cgColor(liquidColor))
             context.fill(CGRect(x: x, y: 0, width: colWidth + 1, height: waterY))
 
-            // Air (above water)
-            context.setFillColor(cgColor(airColor))
+            // Sky (above water)
+            context.setFillColor(cgColor(skyColor))
             context.fill(CGRect(x: x, y: waterY, width: colWidth + 1, height: s - waterY))
         }
 

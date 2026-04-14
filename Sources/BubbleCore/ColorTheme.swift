@@ -33,39 +33,178 @@ public struct SimColor: Sendable, Equatable, Codable {
     }
 }
 
-/// Color theme matching wmbubble's configurable color scheme.
-/// Colors interpolate between noSwap and maxSwap variants based on swap usage.
+/// Configurable color palette for the simulation.
+///
+/// Semantic mapping (aiesrocks/bubble-duck#3):
+///   - **Water level** → memory usage (unchanged; handled by WaterSimulation)
+///   - **Water color** → swap pressure, via `liquidColor(swapUsage:)`
+///   - **Sky color**   → local time of day, via `skyColor(timeOfDay:)`
+///
+/// "Theme overrules" falls out for free — a user who wants a static sky
+/// sets all four sky anchors to the same color; a user who wants water
+/// color that never reacts to swap sets `liquidNoSwap == liquidMaxSwap`.
 public struct ColorTheme: Sendable, Equatable, Codable {
-    public var airNoSwap: SimColor
-    public var airMaxSwap: SimColor
+    // Sky (time-of-day blending anchors)
+    public var skyDawn: SimColor
+    public var skyNoon: SimColor
+    public var skyDusk: SimColor
+    public var skyNight: SimColor
+
+    // Water (swap-pressure anchors)
     public var liquidNoSwap: SimColor
     public var liquidMaxSwap: SimColor
 
+    // Agent
     public var duckBody: SimColor
     public var duckBill: SimColor
     public var duckEye: SimColor
 
+    // Other
     public var bubbleColor: SimColor
 
     public init() {
-        // wmbubble defaults
-        airNoSwap = SimColor(hex: 0x2030C0)     // deep blue air
-        airMaxSwap = SimColor(hex: 0xC02030)     // red-shifted when swapping
-        liquidNoSwap = SimColor(hex: 0x3040E0)   // lighter blue water
-        liquidMaxSwap = SimColor(hex: 0xE04030)   // red water when swapping
-        duckBody = SimColor(hex: 0xF0D000)       // yellow
-        duckBill = SimColor(hex: 0xE09000)        // orange
-        duckEye = SimColor(hex: 0x202020)         // dark
-        bubbleColor = SimColor(r: 1.0, g: 1.0, b: 1.0, a: 0.6)
+        self.skyDawn = ColorTheme.defaultSkyDawn
+        self.skyNoon = ColorTheme.defaultSkyNoon
+        self.skyDusk = ColorTheme.defaultSkyDusk
+        self.skyNight = ColorTheme.defaultSkyNight
+        self.liquidNoSwap = ColorTheme.defaultLiquidNoSwap
+        self.liquidMaxSwap = ColorTheme.defaultLiquidMaxSwap
+        self.duckBody = ColorTheme.defaultDuckBody
+        self.duckBill = ColorTheme.defaultDuckBill
+        self.duckEye = ColorTheme.defaultDuckEye
+        self.bubbleColor = ColorTheme.defaultBubbleColor
     }
 
-    /// Get the current air color interpolated by swap usage (0.0...1.0).
-    public func airColor(swapUsage: Double) -> SimColor {
-        airNoSwap.lerp(to: airMaxSwap, t: swapUsage)
+    public init(
+        skyDawn: SimColor, skyNoon: SimColor, skyDusk: SimColor, skyNight: SimColor,
+        liquidNoSwap: SimColor, liquidMaxSwap: SimColor,
+        duckBody: SimColor, duckBill: SimColor, duckEye: SimColor,
+        bubbleColor: SimColor
+    ) {
+        self.skyDawn = skyDawn
+        self.skyNoon = skyNoon
+        self.skyDusk = skyDusk
+        self.skyNight = skyNight
+        self.liquidNoSwap = liquidNoSwap
+        self.liquidMaxSwap = liquidMaxSwap
+        self.duckBody = duckBody
+        self.duckBill = duckBill
+        self.duckEye = duckEye
+        self.bubbleColor = bubbleColor
     }
 
-    /// Get the current liquid color interpolated by swap usage (0.0...1.0).
+    // MARK: - Built-in defaults (exposed for use by preset themes in #11)
+
+    public static let defaultSkyDawn  = SimColor(hex: 0xD9778A)   // warm pink sunrise
+    public static let defaultSkyNoon  = SimColor(hex: 0x2030C0)   // deep blue — matches the old airNoSwap
+    public static let defaultSkyDusk  = SimColor(hex: 0xA85A4E)   // orange-mauve sunset
+    public static let defaultSkyNight = SimColor(hex: 0x0D1440)   // deep navy
+    public static let defaultLiquidNoSwap  = SimColor(hex: 0x3040E0)
+    public static let defaultLiquidMaxSwap = SimColor(hex: 0xE04030)
+    public static let defaultDuckBody = SimColor(hex: 0xF0D000)
+    public static let defaultDuckBill = SimColor(hex: 0xE09000)
+    public static let defaultDuckEye  = SimColor(hex: 0x202020)
+    public static let defaultBubbleColor = SimColor(r: 1.0, g: 1.0, b: 1.0, a: 0.6)
+
+    // MARK: - Color lookups
+
+    /// Sky color at the current fraction-of-day (0 = midnight, 0.25 = dawn,
+    /// 0.5 = noon, 0.75 = dusk). Smooth blending between the four anchors so
+    /// the sky glides through the day rather than popping.
+    public func skyColor(timeOfDay: Double) -> SimColor {
+        // Normalize into [0, 1)
+        var t = timeOfDay.truncatingRemainder(dividingBy: 1.0)
+        if t < 0 { t += 1.0 }
+
+        // Anchors are placed at 0.0 (midnight → night), 0.25 (dawn),
+        // 0.5 (noon), 0.75 (dusk), and wrap back to night at 1.0.
+        let stops: [(pos: Double, color: SimColor)] = [
+            (0.0,  skyNight),
+            (0.25, skyDawn),
+            (0.5,  skyNoon),
+            (0.75, skyDusk),
+            (1.0,  skyNight)
+        ]
+        for i in 0..<(stops.count - 1) {
+            let a = stops[i]
+            let b = stops[i + 1]
+            if t >= a.pos && t <= b.pos {
+                let localT = (t - a.pos) / (b.pos - a.pos)
+                return a.color.lerp(to: b.color, t: localT)
+            }
+        }
+        return skyNoon
+    }
+
+    /// Water color at the current swap pressure (0...1).
     public func liquidColor(swapUsage: Double) -> SimColor {
         liquidNoSwap.lerp(to: liquidMaxSwap, t: swapUsage)
+    }
+
+    // MARK: - Codable (handles migration from the pre-#3 air/swap schema)
+
+    private enum CodingKeys: String, CodingKey {
+        // Current
+        case skyDawn, skyNoon, skyDusk, skyNight
+        case liquidNoSwap, liquidMaxSwap
+        case duckBody, duckBill, duckEye
+        case bubbleColor
+        // Deprecated — still decoded for backward compatibility. Never
+        // encoded; migrating decoders map these to `skyNoon` / `skyDusk`.
+        case airNoSwap, airMaxSwap
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Prefer new sky anchors; fall back to legacy `airNoSwap` / `airMaxSwap`
+        // if a saved theme from before #3 is loaded. If none are present,
+        // use the factory defaults.
+        if let dawn = try c.decodeIfPresent(SimColor.self, forKey: .skyDawn) {
+            self.skyDawn = dawn
+            self.skyNoon  = try c.decodeIfPresent(SimColor.self, forKey: .skyNoon)  ?? ColorTheme.defaultSkyNoon
+            self.skyDusk  = try c.decodeIfPresent(SimColor.self, forKey: .skyDusk)  ?? ColorTheme.defaultSkyDusk
+            self.skyNight = try c.decodeIfPresent(SimColor.self, forKey: .skyNight) ?? ColorTheme.defaultSkyNight
+        } else if let legacyNoSwap = try c.decodeIfPresent(SimColor.self, forKey: .airNoSwap),
+                  let legacyMaxSwap = try c.decodeIfPresent(SimColor.self, forKey: .airMaxSwap) {
+            // Map the old two-color swap-driven air palette into a plausible
+            // four-anchor day palette: keep the user's "calm" color for noon
+            // and "stressed" color for dusk; interpolate dawn & darken night.
+            self.skyNoon  = legacyNoSwap
+            self.skyDusk  = legacyMaxSwap
+            self.skyDawn  = legacyNoSwap.lerp(to: SimColor(r: 1.0, g: 0.78, b: 0.70), t: 0.4)
+            self.skyNight = SimColor(
+                r: legacyNoSwap.r * 0.30,
+                g: legacyNoSwap.g * 0.30,
+                b: legacyNoSwap.b * 0.45,
+                a: legacyNoSwap.a
+            )
+        } else {
+            self.skyDawn  = ColorTheme.defaultSkyDawn
+            self.skyNoon  = ColorTheme.defaultSkyNoon
+            self.skyDusk  = ColorTheme.defaultSkyDusk
+            self.skyNight = ColorTheme.defaultSkyNight
+        }
+
+        self.liquidNoSwap  = try c.decodeIfPresent(SimColor.self, forKey: .liquidNoSwap)  ?? ColorTheme.defaultLiquidNoSwap
+        self.liquidMaxSwap = try c.decodeIfPresent(SimColor.self, forKey: .liquidMaxSwap) ?? ColorTheme.defaultLiquidMaxSwap
+        self.duckBody = try c.decodeIfPresent(SimColor.self, forKey: .duckBody) ?? ColorTheme.defaultDuckBody
+        self.duckBill = try c.decodeIfPresent(SimColor.self, forKey: .duckBill) ?? ColorTheme.defaultDuckBill
+        self.duckEye  = try c.decodeIfPresent(SimColor.self, forKey: .duckEye)  ?? ColorTheme.defaultDuckEye
+        self.bubbleColor = try c.decodeIfPresent(SimColor.self, forKey: .bubbleColor) ?? ColorTheme.defaultBubbleColor
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(skyDawn,  forKey: .skyDawn)
+        try c.encode(skyNoon,  forKey: .skyNoon)
+        try c.encode(skyDusk,  forKey: .skyDusk)
+        try c.encode(skyNight, forKey: .skyNight)
+        try c.encode(liquidNoSwap,  forKey: .liquidNoSwap)
+        try c.encode(liquidMaxSwap, forKey: .liquidMaxSwap)
+        try c.encode(duckBody, forKey: .duckBody)
+        try c.encode(duckBill, forKey: .duckBill)
+        try c.encode(duckEye,  forKey: .duckEye)
+        try c.encode(bubbleColor, forKey: .bubbleColor)
     }
 }
