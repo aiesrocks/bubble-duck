@@ -141,10 +141,13 @@ final class SystemMetrics {
 
         guard let prev = previousCPUInfo else { return 0 }
 
-        let userDelta = Double(cpuLoadInfo.cpu_ticks.0 - prev.cpu_ticks.0)
-        let systemDelta = Double(cpuLoadInfo.cpu_ticks.1 - prev.cpu_ticks.1)
-        let idleDelta = Double(cpuLoadInfo.cpu_ticks.2 - prev.cpu_ticks.2)
-        let niceDelta = Double(cpuLoadInfo.cpu_ticks.3 - prev.cpu_ticks.3)
+        // Use safeDelta so a wrap of natural_t (UInt32) tick counters —
+        // possible on long uptimes or sleep/wake cycles — doesn't trap
+        // on `current - prev` overflow (aiesrocks/bubble-duck#23).
+        let userDelta   = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.0, prev: prev.cpu_ticks.0))
+        let systemDelta = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.1, prev: prev.cpu_ticks.1))
+        let idleDelta   = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.2, prev: prev.cpu_ticks.2))
+        let niceDelta   = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.3, prev: prev.cpu_ticks.3))
 
         let totalDelta = userDelta + systemDelta + idleDelta + niceDelta
         guard totalDelta > 0 else { return 0 }
@@ -234,20 +237,32 @@ final class SystemMetrics {
         let elapsed = prevTime > 0 ? now - prevTime : 1.0
         defer { prevTime = now }
 
-        // Network
+        // Network bytes/sec — counters can rewind on Wi-Fi reconnect, sleep/
+        // wake, or interface reaping under memory pressure (the
+        // aiesrocks/bubble-duck#23 crash). MetricsDelta.rate treats a
+        // rewind as zero for that tick instead of trapping on UInt64
+        // overflow, and computes the delta in Double space so the sum
+        // can never overflow.
         let netBytes = readNetworkBytes()
-        let netDelta = Double(
-            (netBytes.0 &- prevNetBytes.0) + (netBytes.1 &- prevNetBytes.1)
-        )
-        let netBps = prevNetBytes.0 > 0 ? netDelta / elapsed : 0
+        let netBps = prevNetBytes.0 > 0
+            ? MetricsDelta.rate(
+                currentA: netBytes.0, prevA: prevNetBytes.0,
+                currentB: netBytes.1, prevB: prevNetBytes.1,
+                elapsed: elapsed
+            )
+            : 0
         prevNetBytes = netBytes
 
-        // Disk
+        // Disk IOPS — same shape, same vulnerability if a disk driver is
+        // reaped between samples.
         let diskOps = readDiskOps()
-        let diskDelta = Double(
-            (diskOps.0 &- prevDiskOps.0) + (diskOps.1 &- prevDiskOps.1)
-        )
-        let iops = prevDiskOps.0 > 0 ? diskDelta / elapsed : 0
+        let iops = prevDiskOps.0 > 0
+            ? MetricsDelta.rate(
+                currentA: diskOps.0, prevA: prevDiskOps.0,
+                currentB: diskOps.1, prevB: prevDiskOps.1,
+                elapsed: elapsed
+            )
+            : 0
         prevDiskOps = diskOps
 
         return (netBps, iops)
