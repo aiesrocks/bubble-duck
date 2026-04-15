@@ -375,6 +375,8 @@ struct BubbleRenderer {
             drawHippo(context: context, duck: duck, size: size)
         case .origamiBoat:
             drawOrigamiBoat(context: context, duck: duck, size: size)
+        case .penguin:
+            drawPenguin(context: context, duck: duck, size: size)
         }
     }
 
@@ -840,6 +842,88 @@ struct BubbleRenderer {
         context.move(to: CGPoint(x: 0.12, y: 0.58))
         context.addLine(to: CGPoint(x: 0.12, y: 0.02))
         context.strokePath()
+
+        context.restoreGState()
+    }
+
+    // MARK: - Penguin (glacier companion — black & white on icy water)
+
+    private func drawPenguin(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.37)
+
+        let black = CGColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        let white = CGColor(red: 0.95, green: 0.96, blue: 0.98, alpha: 1)
+
+        // Body — black back, round and upright
+        context.setFillColor(black)
+        context.fillEllipse(in: CGRect(x: -0.25, y: -0.15, width: 0.5, height: 0.6))
+
+        // White belly — front-facing oval
+        context.setFillColor(white)
+        context.fillEllipse(in: CGRect(x: -0.16, y: -0.1, width: 0.32, height: 0.42))
+
+        // Head — black circle on top
+        context.setFillColor(black)
+        context.fillEllipse(in: CGRect(x: -0.18, y: 0.3, width: 0.36, height: 0.32))
+
+        // White face patches (cheeks)
+        context.setFillColor(white)
+        context.fillEllipse(in: CGRect(x: -0.12, y: 0.32, width: 0.10, height: 0.14))
+        context.fillEllipse(in: CGRect(x: 0.02, y: 0.32, width: 0.10, height: 0.14))
+
+        // Eyes — small and expressive
+        context.setFillColor(black)
+        context.fillEllipse(in: CGRect(x: -0.08, y: 0.40, width: 0.06, height: 0.06))
+        context.fillEllipse(in: CGRect(x: 0.02, y: 0.40, width: 0.06, height: 0.06))
+
+        // Eye glints
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+        context.fillEllipse(in: CGRect(x: -0.06, y: 0.43, width: 0.02, height: 0.02))
+        context.fillEllipse(in: CGRect(x: 0.04, y: 0.43, width: 0.02, height: 0.02))
+
+        // Beak — small orange triangle
+        let orange = CGColor(red: 0.95, green: 0.6, blue: 0.15, alpha: 1)
+        context.setFillColor(orange)
+        let beak = CGMutablePath()
+        beak.move(to: CGPoint(x: -0.06, y: 0.36))
+        beak.addLine(to: CGPoint(x: 0.06, y: 0.36))
+        beak.addLine(to: CGPoint(x: 0.0, y: 0.28))
+        beak.closeSubpath()
+        context.addPath(beak)
+        context.fillPath()
+
+        // Flippers — small wings at sides
+        context.setFillColor(black)
+        // Left flipper
+        let leftFlipper = CGMutablePath()
+        leftFlipper.move(to: CGPoint(x: -0.24, y: 0.28))
+        leftFlipper.addCurve(to: CGPoint(x: -0.35, y: -0.02),
+                             control1: CGPoint(x: -0.38, y: 0.2),
+                             control2: CGPoint(x: -0.4, y: 0.05))
+        leftFlipper.addCurve(to: CGPoint(x: -0.22, y: 0.08),
+                             control1: CGPoint(x: -0.3, y: -0.05),
+                             control2: CGPoint(x: -0.24, y: 0.0))
+        leftFlipper.closeSubpath()
+        context.addPath(leftFlipper)
+        context.fillPath()
+
+        // Right flipper
+        let rightFlipper = CGMutablePath()
+        rightFlipper.move(to: CGPoint(x: 0.24, y: 0.28))
+        rightFlipper.addCurve(to: CGPoint(x: 0.35, y: -0.02),
+                              control1: CGPoint(x: 0.38, y: 0.2),
+                              control2: CGPoint(x: 0.4, y: 0.05))
+        rightFlipper.addCurve(to: CGPoint(x: 0.22, y: 0.08),
+                              control1: CGPoint(x: 0.3, y: -0.05),
+                              control2: CGPoint(x: 0.24, y: 0.0))
+        rightFlipper.closeSubpath()
+        context.addPath(rightFlipper)
+        context.fillPath()
+
+        // Feet — small orange ovals poking below
+        context.setFillColor(orange)
+        context.fillEllipse(in: CGRect(x: -0.14, y: -0.18, width: 0.12, height: 0.07))
+        context.fillEllipse(in: CGRect(x: 0.02, y: -0.18, width: 0.12, height: 0.07))
 
         context.restoreGState()
     }

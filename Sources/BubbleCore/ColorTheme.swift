@@ -136,9 +136,21 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         return skyNoon
     }
 
-    /// Water color at the current swap pressure (0...1).
+    /// Water color driven by memory tightness (0...1+).
+    /// Remapped to match MemoryPressure zones:
+    ///   - healthy (< 0.70): stays blue (t = 0)
+    ///   - warning (0.70 - 0.90): blue → red transition
+    ///   - critical (> 0.90): fully red
     public func liquidColor(swapUsage: Double) -> SimColor {
-        liquidNoSwap.lerp(to: liquidMaxSwap, t: swapUsage)
+        let t: Double
+        if swapUsage < 0.70 {
+            t = 0  // healthy — pure blue
+        } else if swapUsage < 0.90 {
+            t = (swapUsage - 0.70) / 0.20  // warning — 0...1 ramp
+        } else {
+            t = 1.0  // critical — pure red
+        }
+        return liquidNoSwap.lerp(to: liquidMaxSwap, t: t)
     }
 
     // MARK: - Codable (handles migration from the pre-#3 air/swap schema)

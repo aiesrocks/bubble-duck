@@ -39,6 +39,9 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     /// Which metric drives the agent's drift speed.
     public var speedMetric: SpeedMetric = .networkIO
 
+    /// Show rain driven by disk IOPS.
+    public var rainEnabled: Bool = true
+
     // MARK: - Colors
 
     public var theme: ColorTheme = ColorTheme()

@@ -240,7 +240,7 @@ public struct DuckState: Sendable {
 
     /// Smoothstep easing between `from` and `to` (returns 0 below `from`,
     /// 1 above `to`, smooth cubic curve in between).
-    static func smoothstep(from: Double, to: Double, value: Double) -> Double {
+    public static func smoothstep(from: Double, to: Double, value: Double) -> Double {
         guard to > from else { return 0 }
         let t = max(0, min(1, (value - from) / (to - from)))
         return t * t * (3 - 2 * t)

@@ -139,7 +139,7 @@ public enum ThemePresets {
     /// Every built-in preset in display order. The first is always
     /// `.default` so the picker shows "Default" at the top.
     public static let all: [ThemePreset] = [
-        .default, .deepSea, .sunsetLagoon, .glacier, .lava, .neonNight, .forestCreek
+        ThemePresets.default, ThemePresets.deepSea, ThemePresets.sunsetLagoon, ThemePresets.glacier, ThemePresets.lava, ThemePresets.neonNight, ThemePresets.forestCreek
     ]
 
     /// Look up a preset by id — used when persisting the current selection.

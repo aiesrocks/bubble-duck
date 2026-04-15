@@ -40,6 +40,7 @@ struct SettingsView: View {
                         Text(metric.rawValue).tag(metric)
                     }
                 }
+                Toggle("Rain (disk I/O)", isOn: $store.config.rainEnabled)
             }
 
             Section("Theme") {

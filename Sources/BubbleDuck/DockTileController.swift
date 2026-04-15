@@ -186,7 +186,12 @@ final class DockTileController {
         let snapshot = metrics.read()
         simulation.cpuLoad = snapshot.cpuLoad
         simulation.memoryUsage = snapshot.memoryUsage
-        simulation.swapUsage = snapshot.swapUsage
+        // Water color is driven by memory tightness (real-time pressure)
+        // rather than raw swap usage, which is a lifetime metric on macOS
+        // that never clears until reboot. Tightness = (active + wired +
+        // compressed + swapUsed) / totalPhysical; values > 1.0 mean paging.
+        // We clamp to 0...1 for the color lerp.
+        simulation.swapUsage = min(1.0, snapshot.memoryTightness)
         // Day/night sky (#3) — pulled from the local clock once per tick.
         simulation.timeOfDay = TimeOfDay.fraction(from: Date())
         // Battery tint (#17) — nil for desktop Macs, forwarded to the renderer.
@@ -228,6 +233,8 @@ final class DockTileController {
         let rainFloor: Double = 500
         let rainCeiling: Double = 5000
         let excess = max(0, snapshot.diskIOPS - rainFloor)
-        simulation.rainIntensity = min(1.0, excess / (rainCeiling - rainFloor))
+        simulation.rainIntensity = simulation.config.rainEnabled
+            ? min(1.0, excess / (rainCeiling - rainFloor))
+            : 0
     }
 }
