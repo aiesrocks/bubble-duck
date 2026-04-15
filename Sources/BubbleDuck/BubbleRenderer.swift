@@ -35,8 +35,15 @@ struct BubbleRenderer {
         }
 
         let theme = state.config.theme
-        let airColor = theme.airColor(swapUsage: state.swapUsage)
-        let liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
+        // Sky (air) = local time of day; water = swap pressure.
+        // See ColorTheme / SimulationState.timeOfDay for the mapping.
+        let skyColor = theme.skyColor(timeOfDay: state.timeOfDay)
+        var liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
+        // Low battery tints the water — desaturation in the warning zone,
+        // apocalyptic red below 10% (aiesrocks/bubble-duck#17).
+        if let battery = state.batteryFraction {
+            liquidColor = BatteryTint.apply(to: liquidColor, batteryFraction: battery)
+        }
         let s = Double(size)
 
         // Draw water tank column by column
@@ -52,9 +59,29 @@ struct BubbleRenderer {
             context.setFillColor(cgColor(liquidColor))
             context.fill(CGRect(x: x, y: 0, width: colWidth + 1, height: waterY))
 
-            // Air (above water)
-            context.setFillColor(cgColor(airColor))
+            // Sky (above water)
+            context.setFillColor(cgColor(skyColor))
             context.fill(CGRect(x: x, y: waterY, width: colWidth + 1, height: s - waterY))
+        }
+
+        // Draw raindrops (aiesrocks/bubble-duck#10): short slightly-blue streaks
+        // falling from the top. Rendered before bubbles so the rising bubbles
+        // and the agent sit visibly on top of the falling drops.
+        if !state.raindrops.isEmpty {
+            context.setStrokeColor(CGColor(red: 0.70, green: 0.82, blue: 1.0, alpha: 0.55))
+            context.setLineWidth(max(0.8, s * 0.005))
+            context.setLineCap(.round)
+            for drop in state.raindrops {
+                let dx = drop.x * s
+                let headY = drop.y * s
+                // Tail trails "behind" the drop in the fall direction.
+                // Drop y decreases as it falls, so the tail sits at higher y.
+                let tailY = min(1.0, drop.y + 0.035) * s
+                context.beginPath()
+                context.move(to: CGPoint(x: dx, y: tailY))
+                context.addLine(to: CGPoint(x: dx, y: headY))
+                context.strokePath()
+            }
         }
 
         // Draw bubbles
@@ -70,10 +97,29 @@ struct BubbleRenderer {
             ))
         }
 
+        // Draw ripple rings (aiesrocks/bubble-duck#4): expanding stroked
+        // circles, alpha fading to zero over the ring's lifetime.
+        for ring in state.ripples {
+            let radius = ring.age * ring.maxRadius * s
+            let alpha = (1.0 - ring.age) * 0.7
+            let rx = ring.x * s
+            let ry = ring.y * s
+            context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: alpha))
+            context.setLineWidth(max(0.8, s * 0.004))
+            context.strokeEllipse(in: CGRect(
+                x: rx - radius, y: ry - radius,
+                width: radius * 2, height: radius * 2
+            ))
+        }
+
         // Draw floating agent
         if state.duck.enabled {
             drawAgent(context: context, duck: state.duck, agentType: state.config.agentType,
                       theme: theme, size: s)
+            // Sleepy "Z" sprite drifts above the agent once sleepiness > 0.5
+            // (aiesrocks/bubble-duck#5). Drawn after the agent so it floats
+            // on top of the silhouette.
+            drawSleepZ(duck: state.duck, size: s)
         }
 
         // CPU gauge (always visible, like wmbubble)
@@ -327,6 +373,8 @@ struct BubbleRenderer {
             drawFrog(context: context, duck: duck, size: size)
         case .hippo:
             drawHippo(context: context, duck: duck, size: size)
+        case .origamiBoat:
+            drawOrigamiBoat(context: context, duck: duck, size: size)
         }
     }
 
@@ -347,6 +395,57 @@ struct BubbleRenderer {
         }
         context.scaleBy(x: agentSize, y: agentSize)
         return agentSize
+    }
+
+    // MARK: Blink rendering helpers
+
+    /// Draws an eye-shaped ellipse that squashes vertically when the agent
+    /// blinks. `openness` is BlinkState.openness (0 = closed, 1 = open);
+    /// the eye never mathematically vanishes — a thin line remains so the
+    /// squash reads naturally. Horizontal center is preserved via the x/y
+    /// origin convention already used by each agent's draw code.
+    private func fillEye(_ context: CGContext,
+                         x: Double, y: Double, width: Double, height: Double,
+                         openness: Double) {
+        let o = max(0.05, openness)
+        let h = height * o
+        let centerY = y + height / 2
+        context.fillEllipse(in: CGRect(x: x, y: centerY - h / 2, width: width, height: h))
+    }
+
+    /// Like fillEye, but the highlight is hidden once the eye is mostly
+    /// closed so no stray sparkle hovers mid-blink.
+    private func fillEyeGlint(_ context: CGContext,
+                              x: Double, y: Double, width: Double, height: Double,
+                              openness: Double) {
+        guard openness > 0.4 else { return }
+        let h = height * openness
+        let centerY = y + height / 2
+        context.fillEllipse(in: CGRect(x: x, y: centerY - h / 2, width: width, height: h))
+    }
+
+    /// Draws a floating "Z" above the agent once `sleepiness > 0.5`
+    /// (aiesrocks/bubble-duck#5). Alpha eases up smoothly between 0.5 and
+    /// 1.0 sleepiness so the Z fades in rather than pops. Uses AppKit text
+    /// rendering since it's cheap and easy to style.
+    private func drawSleepZ(duck: DuckState, size: Double) {
+        guard duck.sleepiness > 0.5 else { return }
+        let alpha = DuckState.smoothstep(from: 0.5, to: 1.0, value: duck.sleepiness) * 0.85
+        let dx = duck.x * size
+        let dy = duck.y * size
+        let bob = sin(duck.bobAngle) * 2.0
+        // Position the Z just above the agent's head, matching the sign
+        // convention the body path uses (positive local y = "away from water").
+        let zY = dy + bob + size * 0.18
+
+        let font = NSFont.systemFont(ofSize: size * 0.09, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor(white: 0.15, alpha: alpha)
+        ]
+        let str = NSAttributedString(string: "Z", attributes: attrs)
+        // `dx` is the agent's horizontal center; nudge left so the Z reads as centered.
+        str.draw(at: NSPoint(x: dx - size * 0.04, y: zY))
     }
 
     private func drawRubberDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
@@ -393,12 +492,13 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.58, y: 0.22, width: 0.32, height: 0.06))
 
         // Eye
+        let o = duck.effectiveEyelidOpenness
         context.setFillColor(cgColor(theme.duckEye))
-        context.fillEllipse(in: CGRect(x: 0.44, y: 0.38, width: 0.08, height: 0.08))
+        fillEye(context, x: 0.44, y: 0.38, width: 0.08, height: 0.08, openness: o)
 
         // Eye glint
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-        context.fillEllipse(in: CGRect(x: 0.47, y: 0.42, width: 0.025, height: 0.025))
+        fillEyeGlint(context, x: 0.47, y: 0.42, width: 0.025, height: 0.025, openness: o)
 
         context.restoreGState()
     }
@@ -455,7 +555,8 @@ struct BubbleRenderer {
 
         // Eye
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.42, y: 0.32, width: 0.07, height: 0.07))
+        fillEye(context, x: 0.42, y: 0.32, width: 0.07, height: 0.07,
+                openness: duck.effectiveEyelidOpenness)
 
         context.restoreGState()
     }
@@ -492,14 +593,15 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.44, y: 0.2, width: 0.1, height: 0.1))
 
         // Small happy eyes
+        let oOtter = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.35, y: 0.12, width: 0.06, height: 0.06))
-        context.fillEllipse(in: CGRect(x: 0.45, y: 0.12, width: 0.06, height: 0.06))
+        fillEye(context, x: 0.35, y: 0.12, width: 0.06, height: 0.06, openness: oOtter)
+        fillEye(context, x: 0.45, y: 0.12, width: 0.06, height: 0.06, openness: oOtter)
 
         // Eye glints
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8))
-        context.fillEllipse(in: CGRect(x: 0.37, y: 0.14, width: 0.02, height: 0.02))
-        context.fillEllipse(in: CGRect(x: 0.47, y: 0.14, width: 0.02, height: 0.02))
+        fillEyeGlint(context, x: 0.37, y: 0.14, width: 0.02, height: 0.02, openness: oOtter)
+        fillEyeGlint(context, x: 0.47, y: 0.14, width: 0.02, height: 0.02, openness: oOtter)
 
         // Little paws resting on belly
         context.setFillColor(furColor)
@@ -539,12 +641,13 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.3, y: 0.0, width: 0.28, height: 0.24))
 
         // Eye
+        let oTurtle = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.46, y: 0.13, width: 0.06, height: 0.06))
+        fillEye(context, x: 0.46, y: 0.13, width: 0.06, height: 0.06, openness: oTurtle)
 
         // Eye glint
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
-        context.fillEllipse(in: CGRect(x: 0.48, y: 0.15, width: 0.02, height: 0.02))
+        fillEyeGlint(context, x: 0.48, y: 0.15, width: 0.02, height: 0.02, openness: oTurtle)
 
         // Front flippers — bigger, paddle-shaped
         context.setFillColor(skinColor)
@@ -576,19 +679,20 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.02, y: -0.02, width: 0.48, height: 0.35))
 
         // Big bulging eyes (on top of head) — bright lime
+        let oFrog = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 0.55, green: 0.9, blue: 0.15, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.1, y: 0.24, width: 0.18, height: 0.18))
-        context.fillEllipse(in: CGRect(x: 0.3, y: 0.24, width: 0.18, height: 0.18))
+        fillEye(context, x: 0.1, y: 0.24, width: 0.18, height: 0.18, openness: oFrog)
+        fillEye(context, x: 0.3, y: 0.24, width: 0.18, height: 0.18, openness: oFrog)
 
         // Pupils
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.15, y: 0.29, width: 0.08, height: 0.08))
-        context.fillEllipse(in: CGRect(x: 0.35, y: 0.29, width: 0.08, height: 0.08))
+        fillEye(context, x: 0.15, y: 0.29, width: 0.08, height: 0.08, openness: oFrog)
+        fillEye(context, x: 0.35, y: 0.29, width: 0.08, height: 0.08, openness: oFrog)
 
         // Eye glints
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
-        context.fillEllipse(in: CGRect(x: 0.18, y: 0.33, width: 0.03, height: 0.03))
-        context.fillEllipse(in: CGRect(x: 0.38, y: 0.33, width: 0.03, height: 0.03))
+        fillEyeGlint(context, x: 0.18, y: 0.33, width: 0.03, height: 0.03, openness: oFrog)
+        fillEyeGlint(context, x: 0.38, y: 0.33, width: 0.03, height: 0.03, openness: oFrog)
 
         // Wide smile
         context.setStrokeColor(CGColor(red: 0.2, green: 0.5, blue: 0.0, alpha: 1))
@@ -640,19 +744,102 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.08, y: 0.14, width: 0.06, height: 0.06))
 
         // Eyes — big, sitting on top of head
+        let oHippo = duck.effectiveEyelidOpenness
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-        context.fillEllipse(in: CGRect(x: -0.12, y: 0.08, width: 0.14, height: 0.14))
-        context.fillEllipse(in: CGRect(x: 0.02, y: 0.08, width: 0.14, height: 0.14))
+        fillEye(context, x: -0.12, y: 0.08, width: 0.14, height: 0.14, openness: oHippo)
+        fillEye(context, x: 0.02, y: 0.08, width: 0.14, height: 0.14, openness: oHippo)
 
         // Pupils
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillEllipse(in: CGRect(x: -0.07, y: 0.12, width: 0.07, height: 0.07))
-        context.fillEllipse(in: CGRect(x: 0.06, y: 0.12, width: 0.07, height: 0.07))
+        fillEye(context, x: -0.07, y: 0.12, width: 0.07, height: 0.07, openness: oHippo)
+        fillEye(context, x: 0.06, y: 0.12, width: 0.07, height: 0.07, openness: oHippo)
 
         // Eye glints
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.6))
-        context.fillEllipse(in: CGRect(x: -0.04, y: 0.15, width: 0.025, height: 0.025))
-        context.fillEllipse(in: CGRect(x: 0.09, y: 0.15, width: 0.025, height: 0.025))
+        fillEyeGlint(context, x: -0.04, y: 0.15, width: 0.025, height: 0.025, openness: oHippo)
+        fillEyeGlint(context, x: 0.09, y: 0.15, width: 0.025, height: 0.025, openness: oHippo)
+
+        context.restoreGState()
+    }
+
+    // MARK: - Origami Boat (folded paper sailboat)
+
+    private func drawOrigamiBoat(context: CGContext, duck: DuckState, size: Double) {
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.26)
+
+        // Crisp paper palette: cream base, soft shadow for folded sides, dark
+        // crease for outlines. Keeps the boat readable on any water color.
+        let paperBase = CGColor(red: 0.97, green: 0.95, blue: 0.90, alpha: 1)
+        let paperShadow = CGColor(red: 0.80, green: 0.77, blue: 0.70, alpha: 1)
+        let edge = CGColor(red: 0.32, green: 0.30, blue: 0.27, alpha: 1)
+
+        // Hull — trapezoid: flat bottom, flared sides, wide deck.
+        let hull = CGMutablePath()
+        hull.move(to: CGPoint(x: -0.55, y: 0.00))
+        hull.addLine(to: CGPoint(x: 0.55, y: 0.00))
+        hull.addLine(to: CGPoint(x: 0.38, y: -0.26))
+        hull.addLine(to: CGPoint(x: -0.38, y: -0.26))
+        hull.closeSubpath()
+
+        context.setFillColor(paperBase)
+        context.addPath(hull)
+        context.fillPath()
+
+        // Shaded right half suggests a central paper fold.
+        let hullShadow = CGMutablePath()
+        hullShadow.move(to: CGPoint(x: 0.00, y: 0.00))
+        hullShadow.addLine(to: CGPoint(x: 0.55, y: 0.00))
+        hullShadow.addLine(to: CGPoint(x: 0.38, y: -0.26))
+        hullShadow.addLine(to: CGPoint(x: 0.00, y: -0.26))
+        hullShadow.closeSubpath()
+
+        context.setFillColor(paperShadow)
+        context.addPath(hullShadow)
+        context.fillPath()
+
+        // Hull outline + center fold line.
+        context.setStrokeColor(edge)
+        context.setLineWidth(0.020)
+        context.addPath(hull)
+        context.strokePath()
+
+        context.setLineWidth(0.015)
+        context.move(to: CGPoint(x: 0.00, y: 0.00))
+        context.addLine(to: CGPoint(x: 0.00, y: -0.26))
+        context.strokePath()
+
+        // Sail — tall triangle rising from deck, slightly forward-leaning.
+        let sail = CGMutablePath()
+        sail.move(to: CGPoint(x: -0.05, y: 0.02))
+        sail.addLine(to: CGPoint(x: 0.30, y: 0.02))
+        sail.addLine(to: CGPoint(x: 0.12, y: 0.58))
+        sail.closeSubpath()
+
+        context.setFillColor(paperBase)
+        context.addPath(sail)
+        context.fillPath()
+
+        // Mirror the hull's fold shading on the sail's back half.
+        let sailShadow = CGMutablePath()
+        sailShadow.move(to: CGPoint(x: 0.12, y: 0.58))
+        sailShadow.addLine(to: CGPoint(x: 0.30, y: 0.02))
+        sailShadow.addLine(to: CGPoint(x: 0.12, y: 0.02))
+        sailShadow.closeSubpath()
+
+        context.setFillColor(paperShadow)
+        context.addPath(sailShadow)
+        context.fillPath()
+
+        // Sail outline + central crease.
+        context.setStrokeColor(edge)
+        context.setLineWidth(0.020)
+        context.addPath(sail)
+        context.strokePath()
+
+        context.setLineWidth(0.015)
+        context.move(to: CGPoint(x: 0.12, y: 0.58))
+        context.addLine(to: CGPoint(x: 0.12, y: 0.02))
+        context.strokePath()
 
         context.restoreGState()
     }

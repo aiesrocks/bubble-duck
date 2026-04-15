@@ -69,4 +69,35 @@ struct BubbleSystemTests {
         }
         #expect(system.bubbles.count <= 5)
     }
+
+    @Test("spawnBurst adds the requested number of bubbles when space exists")
+    func burstAddsRequestedCount() {
+        var system = BubbleSystem()
+        let before = system.bubbles.count
+        let added = system.spawnBurst(x: 0.5, nearSurface: 0.5, count: 3)
+        #expect(added == 3)
+        #expect(system.bubbles.count == before + 3)
+    }
+
+    @Test("spawnBurst respects maxBubbles cap")
+    func burstRespectsMaxBubbles() {
+        var system = BubbleSystem()
+        system.maxBubbles = 4
+        // Pre-fill to 3
+        _ = system.spawnBurst(x: 0.5, nearSurface: 0.5, count: 3)
+        #expect(system.bubbles.count == 3)
+        // Request 5 more — should only add 1 more (to reach cap of 4)
+        let added = system.spawnBurst(x: 0.5, nearSurface: 0.5, count: 5)
+        #expect(added == 1)
+        #expect(system.bubbles.count == 4)
+    }
+
+    @Test("spawnBurst at full tank adds nothing")
+    func burstAtFullTankAddsNothing() {
+        var system = BubbleSystem()
+        system.maxBubbles = 2
+        _ = system.spawnBurst(x: 0.5, nearSurface: 0.5, count: 2)
+        let added = system.spawnBurst(x: 0.5, nearSurface: 0.5, count: 3)
+        #expect(added == 0)
+    }
 }

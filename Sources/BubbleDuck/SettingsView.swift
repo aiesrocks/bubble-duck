@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // BubbleDuck — settings UI bound to ConfigStore
 
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import BubbleCore
 
 struct SettingsView: View {
     @Bindable var store: ConfigStore
+    @State private var themeIOError: String? = nil
 
     var body: some View {
         Form {
@@ -39,14 +42,48 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Colors") {
-                SimColorRow(label: "Air (no swap)", color: $store.config.theme.airNoSwap)
-                SimColorRow(label: "Air (max swap)", color: $store.config.theme.airMaxSwap)
-                SimColorRow(label: "Water (no swap)", color: $store.config.theme.liquidNoSwap)
+            Section("Theme") {
+                Picker("Preset", selection: Binding(
+                    get: { "custom" },  // we don't persist preset id; always shows Custom unless user picks one
+                    set: { newId in
+                        if let preset = ThemePresets.preset(id: newId) {
+                            store.config.theme = preset.theme
+                        }
+                    }
+                )) {
+                    Text("Custom / (current)").tag("custom")
+                    ForEach(ThemePresets.all, id: \.id) { preset in
+                        Text(preset.name).tag(preset.id)
+                    }
+                }
+
+                HStack {
+                    Button("Export Theme…") { exportTheme() }
+                    Button("Import Theme…") { importTheme() }
+                }
+                if let err = themeIOError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section("Sky (time of day)") {
+                SimColorRow(label: "Dawn",  color: $store.config.theme.skyDawn)
+                SimColorRow(label: "Noon",  color: $store.config.theme.skyNoon)
+                SimColorRow(label: "Dusk",  color: $store.config.theme.skyDusk)
+                SimColorRow(label: "Night", color: $store.config.theme.skyNight)
+            }
+
+            Section("Water (swap pressure)") {
+                SimColorRow(label: "Water (no swap)",  color: $store.config.theme.liquidNoSwap)
                 SimColorRow(label: "Water (max swap)", color: $store.config.theme.liquidMaxSwap)
+            }
+
+            Section("Agent & bubbles") {
                 SimColorRow(label: "Duck body", color: $store.config.theme.duckBody)
                 SimColorRow(label: "Duck bill", color: $store.config.theme.duckBill)
-                SimColorRow(label: "Duck eye", color: $store.config.theme.duckEye)
+                SimColorRow(label: "Duck eye",  color: $store.config.theme.duckEye)
                 SimColorRow(label: "Bubble", color: $store.config.theme.bubbleColor,
                             supportsOpacity: true)
             }
@@ -62,6 +99,47 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 380, idealWidth: 420, minHeight: 520, idealHeight: 620)
+    }
+
+    // MARK: - Theme import / export (aiesrocks/bubble-duck#11)
+
+    private func exportTheme() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "BubbleDuckTheme.json"
+        panel.canCreateDirectories = true
+        panel.title = "Export BubbleDuck Theme"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(store.config.theme)
+                try data.write(to: url)
+                themeIOError = nil
+            } catch {
+                themeIOError = "Export failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func importTheme() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "Import BubbleDuck Theme"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let theme = try JSONDecoder().decode(ColorTheme.self, from: data)
+                store.config.theme = theme
+                themeIOError = nil
+            } catch {
+                themeIOError = "Import failed: \(error.localizedDescription)"
+            }
+        }
     }
 }
 

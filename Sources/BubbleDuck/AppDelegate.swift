@@ -57,12 +57,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        menu.addItem(buildRecordSubmenuItem())
+
+        menu.addItem(.separator())
+
         let settingsItem = NSMenuItem(title: "Settings\u{2026}",
                                        action: #selector(openSettingsFromMenu), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
 
         return menu
+    }
+
+    /// Builds the "Record GIF" submenu (10 / 15 / 30 seconds) + cancel.
+    /// The cancel item is only enabled while a recording is in progress.
+    private func buildRecordSubmenuItem() -> NSMenuItem {
+        let submenu = NSMenu()
+        let recording = dockTileController?.isRecording ?? false
+
+        for duration in [10, 15, 30] {
+            let item = NSMenuItem(
+                title: "Record \(duration)s GIF",
+                action: #selector(recordGIFItemInvoked(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = duration
+            item.isEnabled = !recording
+            submenu.addItem(item)
+        }
+
+        submenu.addItem(.separator())
+        let cancelItem = NSMenuItem(title: "Cancel Recording",
+                                    action: #selector(cancelRecording),
+                                    keyEquivalent: "")
+        cancelItem.target = self
+        cancelItem.isEnabled = recording
+        submenu.addItem(cancelItem)
+
+        let parent = NSMenuItem(title: "Record GIF", action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        return parent
     }
 
     // MARK: - Private
@@ -77,6 +112,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func hideOverlay() {
         dockTileController?.setOverlay(.none)
+    }
+
+    @objc private func recordGIFItemInvoked(_ sender: NSMenuItem) {
+        let duration = TimeInterval(sender.tag)
+        guard duration > 0 else { return }
+        let started = dockTileController?.startRecording(duration: duration) { url in
+            // Reveal the finished GIF in Finder so the user sees where it landed.
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } ?? false
+        if !started {
+            NSSound.beep()
+        }
+    }
+
+    @objc private func cancelRecording() {
+        dockTileController?.cancelRecording()
     }
 
     @objc private func openSettingsFromMenu() {

@@ -11,6 +11,7 @@ public enum AgentType: String, Sendable, Equatable, Codable, CaseIterable {
     case turtle = "Turtle"
     case frog = "Frog"
     case hippo = "Hippo"
+    case origamiBoat = "Origami Boat"
 }
 
 /// Which system metric drives the floating agent's speed.

@@ -4,6 +4,8 @@
 import Foundation
 import Darwin
 import IOKit
+import IOKit.ps
+import BubbleCore
 
 /// Reads CPU, memory, and swap metrics from macOS kernel APIs.
 /// Equivalent to wmbubble's sys_linux.c but using Mach host_statistics.
@@ -33,13 +35,35 @@ final class SystemMetrics {
         var networkBytesPerSec: Double = 0   // total in+out bytes/sec
         var diskIOPS: Double = 0             // total read+write ops/sec
         var gpuUtilization: Double = 0       // 0.0...1.0
+
+        // Memory pressure (aiesrocks/bubble-duck#22):
+        // (active + wired + compressed + swapUsed) / totalPhysical.
+        // Values > 1.0 mean the system is paging. Preferred signal for
+        // color-driven "system under stress" indicators since it reflects
+        // real-time pressure (unlike raw swapUsage, which doesn't clear).
+        var memoryTightness: Double = 0
+        var memoryPressureZone: MemoryPressure.Zone = .healthy
+
+        // Battery fraction 0...1 (aiesrocks/bubble-duck#17). nil when the
+        // machine has no battery (desktop Mac) so the renderer can skip
+        // tinting rather than falling back to some arbitrary default.
+        var batteryFraction: Double? = nil
     }
 
     func read() -> Snapshot {
-        let (memUsage, memUsed, memTotal) = readMemoryDetailed()
+        let (memUsage, memUsed, memTotal, memComponents) = readMemoryDetailed()
         let (swapUsage, swapUsed, swapTotal) = readSwapDetailed()
         let loadAvgs = readLoadAverages()
         let (netBps, diskOps) = readDeltaMetrics()
+
+        let tightness = MemoryPressure.tightness(
+            active: memComponents.active,
+            wired: memComponents.wired,
+            compressed: memComponents.compressed,
+            swapUsed: swapUsed,
+            totalPhysical: memTotal
+        )
+
         return Snapshot(
             cpuLoad: readCPU(),
             memoryUsage: memUsage,
@@ -53,8 +77,43 @@ final class SystemMetrics {
             swapTotalBytes: swapTotal,
             networkBytesPerSec: netBps,
             diskIOPS: diskOps,
-            gpuUtilization: readGPUUtilization()
+            gpuUtilization: readGPUUtilization(),
+            memoryTightness: tightness,
+            memoryPressureZone: MemoryPressure.zone(for: tightness),
+            batteryFraction: readBatteryFraction()
         )
+    }
+
+    // MARK: - Battery (IOPS power-source info)
+
+    /// Returns the battery's current-capacity fraction (0...1), or `nil` on
+    /// desktop Macs with no battery. Reads `IOPSCopyPowerSourcesInfo` —
+    /// same API Activity Monitor uses, no entitlements required.
+    private func readBatteryFraction() -> Double? {
+        guard let infoRef = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+            return nil
+        }
+        guard let sourcesRef = IOPSCopyPowerSourcesList(infoRef)?.takeRetainedValue() else {
+            return nil
+        }
+        let sources = sourcesRef as [CFTypeRef]
+        for source in sources {
+            guard let desc = IOPSGetPowerSourceDescription(infoRef, source)?
+                .takeUnretainedValue() as? [String: Any] else {
+                continue
+            }
+            // Only count internal batteries — ignore UPS / external sources.
+            guard (desc[kIOPSTypeKey] as? String) == kIOPSInternalBatteryType else {
+                continue
+            }
+            guard let current = desc[kIOPSCurrentCapacityKey] as? Int,
+                  let maxCap = desc[kIOPSMaxCapacityKey] as? Int,
+                  maxCap > 0 else {
+                continue
+            }
+            return min(1.0, max(0.0, Double(current) / Double(maxCap)))
+        }
+        return nil
     }
 
     // MARK: - CPU (from host_statistics, like wmbubble reads /proc/stat)
@@ -82,10 +141,13 @@ final class SystemMetrics {
 
         guard let prev = previousCPUInfo else { return 0 }
 
-        let userDelta = Double(cpuLoadInfo.cpu_ticks.0 - prev.cpu_ticks.0)
-        let systemDelta = Double(cpuLoadInfo.cpu_ticks.1 - prev.cpu_ticks.1)
-        let idleDelta = Double(cpuLoadInfo.cpu_ticks.2 - prev.cpu_ticks.2)
-        let niceDelta = Double(cpuLoadInfo.cpu_ticks.3 - prev.cpu_ticks.3)
+        // Use safeDelta so a wrap of natural_t (UInt32) tick counters —
+        // possible on long uptimes or sleep/wake cycles — doesn't trap
+        // on `current - prev` overflow (aiesrocks/bubble-duck#23).
+        let userDelta   = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.0, prev: prev.cpu_ticks.0))
+        let systemDelta = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.1, prev: prev.cpu_ticks.1))
+        let idleDelta   = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.2, prev: prev.cpu_ticks.2))
+        let niceDelta   = Double(MetricsDelta.safeDelta(current: cpuLoadInfo.cpu_ticks.3, prev: prev.cpu_ticks.3))
 
         let totalDelta = userDelta + systemDelta + idleDelta + niceDelta
         guard totalDelta > 0 else { return 0 }
@@ -112,7 +174,13 @@ final class SystemMetrics {
 
     // MARK: - Memory (from vm_statistics64, like wmbubble reads /proc/meminfo)
 
-    private func readMemoryDetailed() -> (usage: Double, used: UInt64, total: UInt64) {
+    struct MemoryComponents {
+        var active: UInt64
+        var wired: UInt64
+        var compressed: UInt64
+    }
+
+    private func readMemoryDetailed() -> (usage: Double, used: UInt64, total: UInt64, components: MemoryComponents) {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride
@@ -129,18 +197,25 @@ final class SystemMetrics {
             }
         }
 
-        guard result == KERN_SUCCESS else { return (0, 0, 0) }
+        let emptyComponents = MemoryComponents(active: 0, wired: 0, compressed: 0)
+        guard result == KERN_SUCCESS else { return (0, 0, 0, emptyComponents) }
 
-        let pageSize = Double(vm_kernel_page_size)
-        let active = Double(stats.active_count) * pageSize
-        let wired = Double(stats.wire_count) * pageSize
-        let compressed = Double(stats.compressor_page_count) * pageSize
+        let pageSize = UInt64(vm_kernel_page_size)
+        let activeBytes = UInt64(stats.active_count) * pageSize
+        let wiredBytes = UInt64(stats.wire_count) * pageSize
+        let compressedBytes = UInt64(stats.compressor_page_count) * pageSize
 
-        let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
-        guard totalMemory > 0 else { return (0, 0, 0) }
+        let totalMemory = ProcessInfo.processInfo.physicalMemory
+        guard totalMemory > 0 else { return (0, 0, 0, emptyComponents) }
 
-        let used = active + wired + compressed
-        return (min(1.0, used / totalMemory), UInt64(used), UInt64(totalMemory))
+        let used = activeBytes + wiredBytes + compressedBytes
+        let usage = min(1.0, Double(used) / Double(totalMemory))
+        let components = MemoryComponents(
+            active: activeBytes,
+            wired: wiredBytes,
+            compressed: compressedBytes
+        )
+        return (usage, used, totalMemory, components)
     }
 
     // MARK: - Swap (from sysctl, macOS equivalent)
@@ -162,20 +237,32 @@ final class SystemMetrics {
         let elapsed = prevTime > 0 ? now - prevTime : 1.0
         defer { prevTime = now }
 
-        // Network
+        // Network bytes/sec — counters can rewind on Wi-Fi reconnect, sleep/
+        // wake, or interface reaping under memory pressure (the
+        // aiesrocks/bubble-duck#23 crash). MetricsDelta.rate treats a
+        // rewind as zero for that tick instead of trapping on UInt64
+        // overflow, and computes the delta in Double space so the sum
+        // can never overflow.
         let netBytes = readNetworkBytes()
-        let netDelta = Double(
-            (netBytes.0 &- prevNetBytes.0) + (netBytes.1 &- prevNetBytes.1)
-        )
-        let netBps = prevNetBytes.0 > 0 ? netDelta / elapsed : 0
+        let netBps = prevNetBytes.0 > 0
+            ? MetricsDelta.rate(
+                currentA: netBytes.0, prevA: prevNetBytes.0,
+                currentB: netBytes.1, prevB: prevNetBytes.1,
+                elapsed: elapsed
+            )
+            : 0
         prevNetBytes = netBytes
 
-        // Disk
+        // Disk IOPS — same shape, same vulnerability if a disk driver is
+        // reaped between samples.
         let diskOps = readDiskOps()
-        let diskDelta = Double(
-            (diskOps.0 &- prevDiskOps.0) + (diskOps.1 &- prevDiskOps.1)
-        )
-        let iops = prevDiskOps.0 > 0 ? diskDelta / elapsed : 0
+        let iops = prevDiskOps.0 > 0
+            ? MetricsDelta.rate(
+                currentA: diskOps.0, prevA: prevDiskOps.0,
+                currentB: diskOps.1, prevB: prevDiskOps.1,
+                elapsed: elapsed
+            )
+            : 0
         prevDiskOps = diskOps
 
         return (netBps, iops)
