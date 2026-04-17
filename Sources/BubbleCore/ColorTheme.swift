@@ -96,10 +96,10 @@ public struct ColorTheme: Sendable, Equatable, Codable {
     // MARK: - Built-in defaults (exposed for use by preset themes in #11)
 
     public static let defaultSkyDawn  = SimColor(hex: 0xD9778A)   // warm pink sunrise
-    public static let defaultSkyNoon  = SimColor(hex: 0x2030C0)   // deep blue — matches the old airNoSwap
+    public static let defaultSkyNoon  = SimColor(hex: 0x00FFFF)   // Aqua (Pencils palette)
     public static let defaultSkyDusk  = SimColor(hex: 0xA85A4E)   // orange-mauve sunset
     public static let defaultSkyNight = SimColor(hex: 0x0D1440)   // deep navy
-    public static let defaultLiquidNoSwap  = SimColor(hex: 0x3040E0)
+    public static let defaultLiquidNoSwap  = SimColor(hex: 0x0000FF)   // Blueberry (Pencils palette)
     public static let defaultLiquidMaxSwap = SimColor(hex: 0xE04030)
     public static let defaultDuckBody = SimColor(hex: 0xF0D000)
     public static let defaultDuckBill = SimColor(hex: 0xE09000)

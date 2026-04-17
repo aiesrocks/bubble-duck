@@ -132,14 +132,25 @@ public struct SimulationState: Sendable {
 
         // Agent motion: full step normally, pure water-following when
         // Reduce Motion is on (no drift, no bob, no blink, no splash, no sleep update).
+        let bubbleIntensity = Double(bubbleSystem.bubbles.count) / Double(max(1, bubbleSystem.maxBubbles))
         if reduceMotion {
             duck.followWater(waterLevels: water.levels)
-        } else if let splashColumn = duck.step(waterLevels: water.levels, cpuLoad: cpuLoad) {
+        } else if let splashColumn = duck.step(waterLevels: water.levels, cpuLoad: cpuLoad,
+                                                bubbleIntensity: bubbleIntensity) {
             let surface = water.levels[splashColumn]
             bubbleSystem.spawnBurst(x: duck.x, nearSurface: surface, count: 3)
             water.displace(column: splashColumn, amount: -bubbleSystem.rippleStrength * 0.6)
             // Agent splashes generate a slightly larger ring
             ripples.append(RippleRing(x: duck.x, y: surface, maxRadius: 0.11))
+        }
+
+        // Agent bob ripples — when the bob cycle plunges downward, spawn a
+        // ripple at the agent's position. Size scales with bob amplitude so
+        // idle = no ripples, high CPU = visible splash rings.
+        if !reduceMotion && duck.bobDidPlunge {
+            let cpu2 = cpuLoad * cpuLoad
+            let rippleSize = 0.03 + cpu2 * 0.09  // 0.03 … 0.12
+            ripples.append(RippleRing(x: duck.x, y: duck.y, maxRadius: rippleSize))
         }
 
         // Age ripples and cull any that have expired. Skipped under Reduce
@@ -194,6 +205,9 @@ public struct DuckState: Sendable {
     public var y: Double = 0.5        // vertical position (follows water)
     public var velocityX: Double = 0.001
     public var bobAngle: Double = 0.0 // for gentle bobbing
+    /// Vertical bob amplitude in points, driven by bubble activity.
+    /// More bubbles (higher CPU) = more vigorous bobbing.
+    public var bobAmplitude: Double = 1.0
     public var isUpsideDown: Bool = false
     public var enabled: Bool = true
 
@@ -252,8 +266,11 @@ public struct DuckState: Sendable {
     ///
     /// `cpuLoad` feeds the idle-sleep animation — below `idleCPUThreshold`
     /// sleepiness rises toward 1.0; above it, sleepiness drops rapidly.
+    /// `bubbleIntensity` (0...1) is the ratio of active bubbles to max —
+    /// it drives the bob amplitude so the agent juggles harder under load.
     @discardableResult
-    public mutating func step(waterLevels: [Double], cpuLoad: Double = 0.0) -> Int? {
+    public mutating func step(waterLevels: [Double], cpuLoad: Double = 0.0,
+                              bubbleIntensity: Double = 0.0) -> Int? {
         guard enabled, !waterLevels.isEmpty else { return nil }
 
         // Update sleepiness before motion so the blink animation's next step
@@ -277,13 +294,42 @@ public struct DuckState: Sendable {
             splashColumn = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
         }
 
-        // Follow water surface
+        // Follow water surface — at low CPU the agent glides smoothly toward
+        // the water level instead of snapping to every ripple, and per-frame
+        // movement is clamped so bubble-pop spikes don't cause sudden lurches.
+        // At high CPU the agent rides every wave.
         let col = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
-        y = waterLevels[col]
+        let surfaceY = waterLevels[col]
+        let cpu2 = cpuLoad * cpuLoad
+        let followSpeed = 0.02 + cpu2 * 0.98  // 0.02 at idle … 1.0 at full CPU
+        var delta = (surfaceY - y) * followSpeed
+        // Clamp per-frame movement: at low CPU, tiny max step prevents lurches
+        // from bubble-pop spikes. At high CPU the clamp is effectively gone.
+        let maxStep = 0.0005 + cpu2 * 0.05  // ~0.13px idle … 13px full (on 256px canvas)
+        delta = max(-maxStep, min(maxStep, delta))
+        y += delta
 
-        // Bob gently — faster bobbing when moving faster
-        bobAngle += 0.03 + speedFactor * 0.07
+        // Bob amplitude scales with CPU load directly (not bubble count,
+        // which saturates too early). Quadratic curve keeps low CPU calm
+        // and ramps dramatically past ~50%.
+        let curved = cpuLoad * cpuLoad  // quadratic: 0.2→0.04, 0.8→0.64
+        let targetAmplitude = 0.3 + curved * 14.0  // 0.3pt idle … 14pt full load
+        bobAmplitude += (targetAmplitude - bobAmplitude) * 0.08
+
+        // Bob speed also increases with CPU load
+        let previousBobSin = sin(bobAngle)
+        bobAngle += 0.02 + speedFactor * 0.07 + curved * 0.12
         if bobAngle > .pi * 2 { bobAngle -= .pi * 2 }
+
+        // Detect downward zero-crossing (bob pushing into water → ripple).
+        // previousBobSin >= 0 and current sin < 0 means the agent just
+        // plunged back down through the resting surface.
+        let currentBobSin = sin(bobAngle)
+        if previousBobSin >= 0 && currentBobSin < 0 && cpuLoad > 0.15 {
+            bobDidPlunge = true
+        } else {
+            bobDidPlunge = false
+        }
 
         // Flip upside down if water is very high (>95%)
         isUpsideDown = y > 0.95
@@ -293,6 +339,10 @@ public struct DuckState: Sendable {
 
         return splashColumn
     }
+
+    /// True for one frame when the bob cycle crosses downward, signaling
+    /// the agent "plunged" into the water and should spawn a ripple.
+    public var bobDidPlunge: Bool = false
 
     /// Update only the agent's vertical position to track the water surface,
     /// without drifting, bobbing, or blinking. Used when the system

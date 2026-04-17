@@ -386,7 +386,7 @@ struct BubbleRenderer {
         let agentSize = size * agentScale
         let dx = duck.x * size
         let dy = duck.y * size
-        let bob = sin(duck.bobAngle) * 2.0
+        let bob = sin(duck.bobAngle) * duck.bobAmplitude
 
         context.saveGState()
         context.translateBy(x: dx, y: dy + bob)
@@ -435,7 +435,7 @@ struct BubbleRenderer {
         let alpha = DuckState.smoothstep(from: 0.5, to: 1.0, value: duck.sleepiness) * 0.85
         let dx = duck.x * size
         let dy = duck.y * size
-        let bob = sin(duck.bobAngle) * 2.0
+        let bob = sin(duck.bobAngle) * duck.bobAmplitude
         // Position the Z just above the agent's head, matching the sign
         // convention the body path uses (positive local y = "away from water").
         let zY = dy + bob + size * 0.18
@@ -451,7 +451,10 @@ struct BubbleRenderer {
     }
 
     private func drawRubberDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
-        _ = beginAgent(context: context, duck: duck, size: size)
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.242)
+
+        // 33% fatter — stretch horizontally
+        context.scaleBy(x: 1.33, y: 1.0)
 
         // Body silhouette
         let body = CGMutablePath()
