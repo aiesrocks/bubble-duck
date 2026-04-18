@@ -5,13 +5,16 @@ import Testing
 
 @Suite("Duck State")
 struct DuckStateTests {
-    @Test("duck y follows water level under its x position")
+    @Test("duck y converges to water level under its x position")
     func duckFollowsWater() {
         var duck = DuckState()
         duck.x = 0.5
         let levels = Array(repeating: 0.3, count: 16)
-        duck.step(waterLevels: levels)
-        #expect(abs(duck.y - 0.3) < 0.001)
+        // Agent smoothly follows the water surface — several steps to converge.
+        for _ in 0..<120 {
+            duck.step(waterLevels: levels, cpuLoad: 1.0)
+        }
+        #expect(abs(duck.y - 0.3) < 0.01)
     }
 
     @Test("duck flips upside-down when water exceeds 0.95")
@@ -19,7 +22,10 @@ struct DuckStateTests {
         var duck = DuckState()
         duck.x = 0.5
         let levels = Array(repeating: 0.98, count: 16)
-        duck.step(waterLevels: levels)
+        // Agent smoothly follows — step enough to converge past 0.95.
+        for _ in 0..<120 {
+            duck.step(waterLevels: levels, cpuLoad: 1.0)
+        }
         #expect(duck.isUpsideDown)
     }
 

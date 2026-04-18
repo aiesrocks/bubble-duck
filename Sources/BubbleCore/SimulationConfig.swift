@@ -3,6 +3,16 @@
 
 import Foundation
 
+/// Power consumption mode. Controls frame rate and which visual effects
+/// are active. "Auto" adapts frame rate to activity and defers to the
+/// system's Low Power Mode setting.
+public enum PowerMode: String, Sendable, Equatable, Codable, CaseIterable {
+    case smoothest = "Smoothest"
+    case auto = "Auto"
+    case low = "Low"
+    case lowest = "Lowest"
+}
+
 /// All tunable knobs for the simulation: physics, features, colors.
 /// Designed to be serialized (JSON) into UserDefaults by the macOS layer,
 /// so kept Codable and platform-free here in BubbleCore.
@@ -41,6 +51,11 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
 
     /// Show rain driven by disk IOPS.
     public var rainEnabled: Bool = true
+
+    // MARK: - Power
+
+    /// Power consumption mode — controls frame rate and visual fidelity.
+    public var powerMode: PowerMode = .auto
 
     // MARK: - Colors
 

@@ -17,19 +17,29 @@ final class DockTileController {
     private var frameTimer: Timer?
     private var metricsTimer: Timer?
     private var accessibilityObserver: NSObjectProtocol?
+    private var lowPowerObserver: NSObjectProtocol?
 
     /// Active GIF recording, if any. Set by `startRecording`, cleared when
     /// the recorder reports completion (or when explicitly cancelled).
     private var gifRecorder: GIFRecorder?
 
-    /// Normal frame interval (~60fps like wmbubble's 15ms delay)
-    private let normalFrameInterval: TimeInterval = 1.0 / 60.0
     /// Reduced-motion frame interval (2fps) — honors the accessibility
     /// preference (aiesrocks/bubble-duck#15). At 2fps the water level still
     /// tracks RAM smoothly enough without being motion-sickness inducing.
     private let reducedMotionFrameInterval: TimeInterval = 0.5
     /// How often to poll system metrics (every ~1 second)
     private let metricsInterval: TimeInterval = 1.0
+
+    /// Currently installed frame interval, tracked to avoid unnecessary
+    /// timer reinstalls when the adaptive rate hasn't changed much.
+    private var currentFrameInterval: TimeInterval = 1.0 / 60.0
+
+    /// Smoothed activity level 0...1 used to drive adaptive frame rate in
+    /// Auto mode. Computed from CPU load, rain intensity, and bubble fill.
+    private var activityLevel: Double = 0.0
+
+    /// Resolved power mode after considering system Low Power Mode.
+    private var effectivePowerMode: PowerMode = .auto
 
     init(config: SimulationConfig = .default) {
         simulation = SimulationState(canvasSize: 256, config: config)
@@ -43,6 +53,7 @@ final class DockTileController {
     /// Push a new configuration into the running simulation.
     func apply(_ config: SimulationConfig) {
         simulation.apply(config)
+        resolveEffectivePowerMode()
     }
 
     /// Set a specific overlay screen.
@@ -77,8 +88,10 @@ final class DockTileController {
         // Pick up current Reduce Motion setting before scheduling the first
         // frame, and subscribe for live changes.
         simulation.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        resolveEffectivePowerMode()
         installFrameTimer()
         observeAccessibilityChanges()
+        observeLowPowerMode()
 
         metricsTimer = Timer.scheduledTimer(withTimeInterval: metricsInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -99,15 +112,39 @@ final class DockTileController {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             accessibilityObserver = nil
         }
+        if let observer = lowPowerObserver {
+            NotificationCenter.default.removeObserver(observer)
+            lowPowerObserver = nil
+        }
     }
 
-    /// Install (or reinstall) the frame timer at whatever rate matches the
-    /// current Reduce Motion state.
+    // MARK: - Frame rate
+
+    /// Compute the desired frame interval based on the effective power mode
+    /// and current activity level.
+    private func desiredFrameInterval() -> TimeInterval {
+        if simulation.reduceMotion { return reducedMotionFrameInterval }
+        switch effectivePowerMode {
+        case .smoothest:
+            return 1.0 / 60.0
+        case .auto:
+            // Adaptive: 10fps at idle → 60fps at full activity.
+            let fps = 10.0 + activityLevel * 50.0
+            return 1.0 / fps
+        case .low:
+            return 1.0 / 15.0
+        case .lowest:
+            return 1.0 / 4.0
+        }
+    }
+
+    /// Install (or reinstall) the frame timer. Called when the desired rate
+    /// changes significantly (power mode switch, activity level shift,
+    /// accessibility toggle).
     private func installFrameTimer() {
         frameTimer?.invalidate()
-        let interval = simulation.reduceMotion
-            ? reducedMotionFrameInterval
-            : normalFrameInterval
+        let interval = desiredFrameInterval()
+        currentFrameInterval = interval
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
@@ -116,6 +153,48 @@ final class DockTileController {
         RunLoop.main.add(timer, forMode: .common)
         frameTimer = timer
     }
+
+    /// Reinstall the frame timer only if the desired interval diverged from
+    /// the currently installed one by more than 20%. Avoids churning the
+    /// RunLoop on every metrics tick.
+    private func updateFrameRateIfNeeded() {
+        let desired = desiredFrameInterval()
+        let ratio = desired / currentFrameInterval
+        if ratio < 0.8 || ratio > 1.2 {
+            installFrameTimer()
+        }
+    }
+
+    // MARK: - Power mode
+
+    /// Resolve the effective power mode from the user's config and the
+    /// system's Low Power Mode state, then push it into the simulation and
+    /// adjust the frame timer.
+    private func resolveEffectivePowerMode() {
+        let configured = simulation.config.powerMode
+        let systemLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        if systemLowPower {
+            effectivePowerMode = .lowest
+        } else {
+            effectivePowerMode = configured
+        }
+        simulation.effectivePowerMode = effectivePowerMode
+        updateFrameRateIfNeeded()
+    }
+
+    private func observeLowPowerMode() {
+        lowPowerObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.resolveEffectivePowerMode()
+            }
+        }
+    }
+
+    // MARK: - Accessibility
 
     private func observeAccessibilityChanges() {
         accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -136,6 +215,8 @@ final class DockTileController {
         // Reinstall the timer so the frame rate matches the new mode.
         installFrameTimer()
     }
+
+    // MARK: - Tick
 
     private func tick() {
         simulation.step()
@@ -181,6 +262,8 @@ final class DockTileController {
         gifRecorder?.cancel()
         gifRecorder = nil
     }
+
+    // MARK: - Metrics
 
     private func updateMetrics() {
         let snapshot = metrics.read()
@@ -236,5 +319,16 @@ final class DockTileController {
         simulation.rainIntensity = simulation.config.rainEnabled
             ? min(1.0, excess / (rainCeiling - rainFloor))
             : 0
+
+        // Update activity level for adaptive frame rate (Auto mode).
+        // Smoothed so fps doesn't oscillate on every metrics tick.
+        let bubbleRatio = Double(simulation.bubbleSystem.bubbles.count)
+            / Double(max(1, simulation.config.maxBubbles))
+        let rawActivity = max(snapshot.cpuLoad, simulation.rainIntensity, bubbleRatio)
+        activityLevel += (rawActivity - activityLevel) * 0.3
+
+        // Re-evaluate power mode (system Low Power may have changed) and
+        // adjust the frame timer if the adaptive rate shifted.
+        resolveEffectivePowerMode()
     }
 }

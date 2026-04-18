@@ -32,6 +32,17 @@ public struct SimulationState: Sendable {
     /// into the sub-systems.
     public private(set) var config: SimulationConfig
 
+    /// Effective power mode after resolving system Low Power Mode.
+    /// Set by the macOS layer — `.auto` is resolved there, not here.
+    ///
+    /// Feature gating per mode:
+    /// - `.smoothest` / `.auto`: all features, fps managed by controller
+    /// - `.low`: no rain, no bob ripples, ripple count capped at 20,
+    ///           bubbles capped at min(30, config)
+    /// - `.lowest`: no rain, no ripples spawned, bubbles capped at
+    ///              min(10, config), agent uses followWater (no bob)
+    public var effectivePowerMode: PowerMode = .auto
+
     /// Honors the system accessibility "Reduce Motion" preference
     /// (aiesrocks/bubble-duck#15). When true:
     ///   - Bubble spawning is suppressed (existing bubbles finish rising and pop)
@@ -88,18 +99,27 @@ public struct SimulationState: Sendable {
 
     /// Advance the simulation by one frame.
     public mutating func step() {
+        let isLowPower = effectivePowerMode == .low || effectivePowerMode == .lowest
+        let isLowest = effectivePowerMode == .lowest
+
+        // Effective bubble cap — lower in power-saving modes.
+        let effectiveMaxBubbles = isLowest ? min(10, config.maxBubbles)
+            : isLowPower ? min(30, config.maxBubbles)
+            : config.maxBubbles
+
         // Update water target from memory usage — runs in every mode so the
         // water level still tracks RAM even with Reduce Motion on.
         water.targetLevel = memoryUsage
 
         // Bubble spawning is motion → skip when Reduce Motion is on.
         if !reduceMotion {
-            if let col = bubbleSystem.maybeSpawn(cpuLoad: cpuLoad, columnCount: water.columnCount) {
+            if bubbleSystem.bubbles.count < effectiveMaxBubbles,
+               let col = bubbleSystem.maybeSpawn(cpuLoad: cpuLoad, columnCount: water.columnCount) {
                 water.displace(column: col, amount: -bubbleSystem.rippleStrength)
             }
-            // Rain spawn (aiesrocks/bubble-duck#10): probability per frame
-            // equals rainIntensity, capped at maxRaindrops concurrent drops.
-            if rainIntensity > 0,
+            // Rain spawn (aiesrocks/bubble-duck#10): suppressed in Low/Lowest.
+            if !isLowPower,
+               rainIntensity > 0,
                raindrops.count < SimulationState.maxRaindrops,
                Double.random(in: 0..<1) < rainIntensity {
                 raindrops.append(Raindrop(
@@ -119,8 +139,8 @@ public struct SimulationState: Sendable {
         let popped = bubbleSystem.step(waterLevels: water.levels)
         for col in popped {
             water.displace(column: col, amount: bubbleSystem.rippleStrength)
-            if !reduceMotion {
-                // Surface ring at the pop point
+            // Ripple on pop — suppressed in Lowest and Reduce Motion.
+            if !reduceMotion && !isLowest {
                 let xFrac = (Double(col) + 0.5) / Double(water.columnCount)
                 let yFrac = water.levels[col]
                 ripples.append(RippleRing(x: xFrac, y: yFrac))
@@ -130,24 +150,23 @@ public struct SimulationState: Sendable {
         // Step water physics so levels smoothly track their memory target.
         water.step()
 
-        // Agent motion: full step normally, pure water-following when
-        // Reduce Motion is on (no drift, no bob, no blink, no splash, no sleep update).
+        // Agent motion: pure water-following in Reduce Motion or Lowest
+        // (no drift, no bob, no blink); full step otherwise.
         let bubbleIntensity = Double(bubbleSystem.bubbles.count) / Double(max(1, bubbleSystem.maxBubbles))
-        if reduceMotion {
+        if reduceMotion || isLowest {
             duck.followWater(waterLevels: water.levels)
         } else if let splashColumn = duck.step(waterLevels: water.levels, cpuLoad: cpuLoad,
                                                 bubbleIntensity: bubbleIntensity) {
             let surface = water.levels[splashColumn]
             bubbleSystem.spawnBurst(x: duck.x, nearSurface: surface, count: 3)
             water.displace(column: splashColumn, amount: -bubbleSystem.rippleStrength * 0.6)
-            // Agent splashes generate a slightly larger ring
-            ripples.append(RippleRing(x: duck.x, y: surface, maxRadius: 0.11))
+            if !isLowPower {
+                ripples.append(RippleRing(x: duck.x, y: surface, maxRadius: 0.11))
+            }
         }
 
-        // Agent bob ripples — when the bob cycle plunges downward, spawn a
-        // ripple at the agent's position. Size scales with bob amplitude so
-        // idle = no ripples, high CPU = visible splash rings.
-        if !reduceMotion && duck.bobDidPlunge {
+        // Agent bob ripples — suppressed in Low/Lowest.
+        if !reduceMotion && !isLowPower && duck.bobDidPlunge {
             let cpu2 = cpuLoad * cpuLoad
             let rippleSize = 0.03 + cpu2 * 0.09  // 0.03 … 0.12
             ripples.append(RippleRing(x: duck.x, y: duck.y, maxRadius: rippleSize))
@@ -168,6 +187,10 @@ public struct SimulationState: Sendable {
                     i += 1
                 }
             }
+            // In Low mode, cap concurrent ripples so they don't pile up.
+            if isLowPower && ripples.count > 20 {
+                ripples.removeFirst(ripples.count - 20)
+            }
         }
 
         // Animate overlay alpha
@@ -179,6 +202,7 @@ public struct SimulationState: Sendable {
     /// displacement + surface ring. Called unconditionally so existing
     /// drops finish falling even after Reduce Motion toggles on.
     private mutating func stepRaindrops() {
+        let isLowest = effectivePowerMode == .lowest
         var i = 0
         while i < raindrops.count {
             raindrops[i].y -= raindrops[i].fallSpeed
@@ -187,7 +211,7 @@ public struct SimulationState: Sendable {
             let surface = water.levels[col]
             if raindrops[i].y <= surface {
                 water.displace(column: col, amount: -0.003)
-                if !reduceMotion {
+                if !reduceMotion && !isLowest {
                     ripples.append(RippleRing(x: xFrac, y: surface, maxRadius: 0.04))
                 }
                 raindrops.remove(at: i)

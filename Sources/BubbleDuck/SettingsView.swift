@@ -12,6 +12,28 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Power") {
+                Picker("Mode", selection: $store.config.powerMode) {
+                    ForEach(PowerMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                switch store.config.powerMode {
+                case .smoothest:
+                    Text("Full render at 60 fps. Maximum energy use.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .auto:
+                    Text("Adaptive 10–60 fps based on activity. Drops to Lowest when macOS Low Power Mode is on.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .low:
+                    Text("15 fps. No rain, fewer bubbles and ripples.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .lowest:
+                    Text("4 fps. Minimal bubbles, no rain/ripples/bob.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Section("Physics") {
                 Stepper(value: $store.config.maxBubbles, in: 1...500) {
                     LabeledReadout(label: "Max bubbles", value: "\(store.config.maxBubbles)")
