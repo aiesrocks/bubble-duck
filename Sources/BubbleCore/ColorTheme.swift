@@ -116,14 +116,21 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         var t = timeOfDay.truncatingRemainder(dividingBy: 1.0)
         if t < 0 { t += 1.0 }
 
-        // Anchors are placed at 0.0 (midnight → night), 0.25 (dawn),
-        // 0.5 (noon), 0.75 (dusk), and wrap back to night at 1.0.
+        // Night holds from 7PM to 5AM, then a 1-hour transition into
+        // dawn at 6AM. Daytime anchors (dawn/noon/dusk) are unchanged.
+        //   5/24 ≈ 0.2083 = 5AM (night ends, dawn transition starts)
+        //   6/24 = 0.25    = 6AM (dawn)
+        //  12/24 = 0.5     = noon
+        //  18/24 = 0.75    = 6PM (dusk)
+        //  19/24 ≈ 0.7917  = 7PM (fully night)
         let stops: [(pos: Double, color: SimColor)] = [
-            (0.0,  skyNight),
-            (0.25, skyDawn),
-            (0.5,  skyNoon),
-            (0.75, skyDusk),
-            (1.0,  skyNight)
+            (0.0,         skyNight),   // midnight — night
+            (5.0 / 24.0,  skyNight),   // 5AM — still night
+            (0.25,        skyDawn),    // 6AM — dawn
+            (0.5,         skyNoon),    // noon
+            (0.75,        skyDusk),    // 6PM — dusk
+            (19.0 / 24.0, skyNight),   // 7PM — fully night
+            (1.0,         skyNight)    // midnight — wraps
         ]
         for i in 0..<(stops.count - 1) {
             let a = stops[i]
