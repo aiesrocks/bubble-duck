@@ -84,7 +84,54 @@ Right-click the dock icon → **Settings** to open the settings panel.
 - **Floating Agent**: choose character type and which metric drives speed
 - **Physics**: max bubbles, gravity, ripple strength, volatility, viscosity, speed limit
 - **Colors**: water, air, duck, and bubble colors (with swap-based interpolation)
-- **Overlays**: click the dock icon to cycle through load average and memory info screens
+- **Overlays**: click the dock icon to cycle through load average, memory info, and Claude usage screens
+- **Claude usage**: drive the water level from your Claude 5-hour window and the water color from your weekly window
+- **Tile readout**: the one always-on line of text — CPU %, memory %, or a Claude figure such as `42% 4:12` — with configurable color, opacity, size, position and backdrop
+
+## Claude Code usage on the tile (optional)
+
+Claude Code hands its status-line command a JSON payload that, for subscription
+accounts, includes the real server-side limits:
+
+```json
+"rate_limits": {
+  "five_hour": {"used_percentage": 42.1, "resets_at": 1786690000},
+  "seven_day": {"used_percentage": 61.0, "resets_at": 1787200000}
+}
+```
+
+BubbleDuck reads those numbers second-hand — it never touches your credentials.
+Install the bundled wrapper as your status line, keeping whatever command you
+already use as its argument:
+
+```bash
+cp scripts/bubbleduck-statusline.sh ~/.claude/bubbleduck-statusline.sh
+chmod +x ~/.claude/bubbleduck-statusline.sh
+```
+
+```jsonc
+// ~/.claude/settings.json
+"statusLine": {
+  "type": "command",
+  "command": "~/.claude/bubbleduck-statusline.sh npx -y ccstatusline@latest"
+}
+```
+
+The wrapper writes `~/.claude/bubbleduck-usage.json` and passes stdin through
+unchanged, so your existing status line keeps working. Requires `jq`.
+
+Then in Settings → **Claude usage** pick what the data drives, and in
+**Tile readout** choose what the tile's single line of text shows (it replaces
+the CPU digits rather than adding a second line). Caveats worth
+knowing before you trust the tile:
+
+- Claude Code only reports usage from **interactive** sessions. With none
+  running, the percentages stop updating; BubbleDuck marks them stale (`~`) and
+  by default falls back to system metrics.
+- Reset countdowns stay accurate regardless — they're computed from absolute
+  reset timestamps. Once a window rolls over, usage reads 0.
+- The 5-hour history graph is BubbleDuck's own recording (one sample per
+  refresh, cleared on relaunch). Anthropic exposes no historical series.
 
 ## Origin
 

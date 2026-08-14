@@ -19,7 +19,7 @@ struct BubbleRenderer {
     private let graphBar = CGColor(red: 0, green: 0.49, blue: 0.44, alpha: 1)           // #007D71
     private let graphMax = CGColor(red: 0.125, green: 0.71, blue: 0.68, alpha: 1)       // #20B6AE
     private let graphMarker = CGColor(red: 0.44, green: 0.89, blue: 0.44, alpha: 1)     // #71E371
-    private let gaugeDigitColor = CGColor(red: 0.125, green: 0.69, blue: 0.67, alpha: 1) // #20B0AC
+    // The tile readout's own color lives in TileReadoutConfig (default #20B0AC).
 
     init(size: Int = 256) {
         self.size = size
@@ -35,10 +35,11 @@ struct BubbleRenderer {
         }
 
         let theme = state.config.theme
-        // Sky (air) = local time of day; water = swap pressure.
-        // See ColorTheme / SimulationState.timeOfDay for the mapping.
+        let now = Date()
+        // Sky (air) = local time of day; water = memory tightness or Claude
+        // weekly usage, per config. See SimulationState.waterColor(now:).
         let skyColor = theme.skyColor(timeOfDay: state.timeOfDay)
-        var liquidColor = theme.liquidColor(swapUsage: state.swapUsage)
+        var liquidColor = state.waterColor(now: now)
         // Low battery tints the water — desaturation in the warning zone,
         // apocalyptic red below 10% (aiesrocks/bubble-duck#17).
         if let battery = state.batteryFraction {
@@ -122,42 +123,102 @@ struct BubbleRenderer {
             drawSleepZ(duck: state.duck, size: s)
         }
 
-        // CPU gauge (always visible, like wmbubble)
-        drawCPUGauge(context: context, overlay: state.overlay, size: s)
+        // The tile's one always-on readout — wmbubble's CPU digits by default,
+        // or a Claude figure in the same slot.
+        drawTileReadout(context: context, state: state, now: now, size: s)
 
-        // Overlay screens (load average or memory info)
+        // Overlay screens (load average, memory info, Claude usage)
         if state.overlay.overlayAlpha > 0.01 {
-            drawOverlay(context: context, overlay: state.overlay, size: s)
+            drawOverlay(context: context, state: state, now: now, size: s)
         }
 
         nsImage.unlockFocus()
         return nsImage
     }
 
-    // MARK: - CPU Gauge
+    // MARK: - Tile readout
 
-    /// Draws "XX%" at bottom-center, like wmbubble's draw_cpugauge().
-    /// Always visible with alpha controlled by overlay.gaugeAlpha.
-    private func drawCPUGauge(context: CGContext, overlay: OverlayState, size: Double) {
-        let alpha = overlay.gaugeAlpha
-        guard alpha > 0.01 else { return }
+    /// The tile's single always-on text, in the slot wmbubble used for its CPU
+    /// digits (`draw_cpugauge()`). What it shows is configurable — CPU,
+    /// memory, or a Claude figure — and so are color, opacity, size, position
+    /// and the backdrop pill.
+    ///
+    /// Claude countdowns are computed from an absolute `resets_at`, so they
+    /// stay correct even when no Claude Code session has refreshed the file in
+    /// a while. Only *percentages* go stale: those are marked `~` and the
+    /// whole readout dims.
+    private func drawTileReadout(context: CGContext, state: SimulationState,
+                                 now: Date, size: Double) {
+        let cfg = state.config.tileReadout
+        guard let readout = state.tileReadout(now: now) else { return }
 
-        context.saveGState()
-        context.setAlpha(alpha)
+        // wmbubble dims the digits while no overlay is up and brightens them
+        // with it; `opacity` is the peak.
+        let dim = cfg.dimWhenIdle ? state.overlay.gaugeAlpha / 0.69 : 1.0
+        let opacity = max(0, min(1, cfg.opacity)) * dim * (readout.isStale ? 0.55 : 1.0)
+        guard opacity > 0.01 else { return }
 
-        let text = String(format: "%d%%", overlay.cpuPercent)
-        let fontSize = size * 0.14
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
-            .foregroundColor: NSColor(cgColor: gaugeDigitColor) ?? .cyan
-        ]
-        let attrStr = NSAttributedString(string: text, attributes: attrs)
+        let color = NSColor(srgbRed: cfg.color.r, green: cfg.color.g,
+                            blue: cfg.color.b, alpha: 1.0)
+        // Outline in whichever of black/white contrasts with the text color,
+        // so the readout survives being drawn over pale sky or bright water —
+        // teal digits on a cyan sky are otherwise nearly invisible.
+        let luminance = 0.2126 * cfg.color.r + 0.7152 * cfg.color.g + 0.0722 * cfg.color.b
+        let outlineColor: NSColor = luminance > 0.55 ? .black : .white
+
+        func attributes(fontSize: Double) -> [NSAttributedString.Key: Any] {
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
+                .foregroundColor: color
+            ]
+            if cfg.outline {
+                // Negative width = stroke *and* fill, as a percentage of the
+                // font size, so the outline scales with the text.
+                attrs[.strokeWidth] = -5.0
+                attrs[.strokeColor] = outlineColor
+            }
+            return attrs
+        }
+
+        // Shrink to fit rather than letting a long string ("42% 4:12") run
+        // off the tile at large sizes — the size slider then behaves as
+        // "as big as this will go".
+        let maxWidth = size * 0.92
+        var fontSize = size * max(0.04, min(0.40, cfg.fontScale))
+        var attrStr = NSAttributedString(string: readout.text, attributes: attributes(fontSize: fontSize))
+        if attrStr.size().width > maxWidth {
+            fontSize *= maxWidth / attrStr.size().width
+            attrStr = NSAttributedString(string: readout.text, attributes: attributes(fontSize: fontSize))
+        }
         let textSize = attrStr.size()
         let x = (size - textSize.width) / 2
-        let y = size * 0.03  // near bottom (CG y=0 is bottom)
+
+        // CG origin is bottom-left; `bottom` is wmbubble's gauge position.
+        let y: Double
+        switch cfg.position {
+        case .top:    y = size - textSize.height - size * 0.03
+        case .center: y = (size - textSize.height) / 2
+        case .bottom: y = size * 0.03
+        }
+
+        context.saveGState()
+        context.setAlpha(opacity)
+
+        if cfg.backdrop {
+            let padX = fontSize * 0.45
+            let padY = fontSize * 0.16
+            let pill = CGRect(x: x - padX, y: y - padY,
+                              width: textSize.width + padX * 2,
+                              height: textSize.height + padY * 2)
+            let path = CGPath(roundedRect: pill,
+                              cornerWidth: pill.height / 2, cornerHeight: pill.height / 2,
+                              transform: nil)
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.45))
+            context.addPath(path)
+            context.fillPath()
+        }
 
         attrStr.draw(at: NSPoint(x: x, y: y))
-
         context.restoreGState()
     }
 
@@ -165,7 +226,9 @@ struct BubbleRenderer {
 
     /// Draw overlay directly on top of the water/bubbles (semi-transparent).
     /// No opaque background box — just text and graph composited over the scene.
-    private func drawOverlay(context: CGContext, overlay: OverlayState, size: Double) {
+    private func drawOverlay(context: CGContext, state: SimulationState,
+                             now: Date, size: Double) {
+        let overlay = state.overlay
         context.saveGState()
         context.setAlpha(overlay.overlayAlpha)
 
@@ -174,11 +237,75 @@ struct BubbleRenderer {
             drawLoadAverageScreen(context: context, overlay: overlay, size: size)
         case .memoryInfo:
             drawMemoryInfoScreen(context: context, overlay: overlay, size: size)
+        case .claudeUsage:
+            drawClaudeUsageScreen(context: context, state: state, now: now, size: size)
         case .none:
             break
         }
 
         context.restoreGState()
+    }
+
+    /// Claude usage screen: 5-hour and 7-day percentages with their reset
+    /// countdowns, plus BubbleDuck's own recording of the 5-hour series.
+    private func drawClaudeUsageScreen(context: CGContext, state: SimulationState,
+                                       now: Date, size: Double) {
+        let fontSize = size * 0.07
+        let stale = state.claudeUsageIsStale(now: now)
+
+        func line(_ text: String, warning: Bool, y: Double) {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
+                .foregroundColor: NSColor(cgColor: warning ? warningColor : digitColor) ?? .cyan
+            ]
+            NSAttributedString(string: text, attributes: attrs)
+                .draw(at: NSPoint(x: size * 0.06, y: y))
+        }
+
+        let topY = size - fontSize - 6
+        let secondY = size - fontSize * 2 - 12
+
+        guard let usage = state.claudeUsage else {
+            line("claude: no data", warning: false, y: topY)
+            line("see statusline hook", warning: false, y: secondY)
+            return
+        }
+
+        let mark = stale ? "~" : ""
+        if let five = usage.fiveHour {
+            let percent = five.percentage(now: now)
+            let text = String(format: "5h %@%d%% %@", mark, Int(percent.rounded()),
+                              ClaudeUsageFormat.countdown(five.timeUntilReset(now: now)))
+            line(text, warning: percent >= 90, y: topY)
+        } else {
+            line("5h —", warning: false, y: topY)
+        }
+
+        if let week = usage.sevenDay {
+            let percent = week.percentage(now: now)
+            let text = String(format: "7d %@%d%% %@", mark, Int(percent.rounded()),
+                              ClaudeUsageFormat.countdown(week.timeUntilReset(now: now)))
+            line(text, warning: percent >= 90, y: secondY)
+        } else {
+            line("7d —", warning: false, y: secondY)
+        }
+
+        // 5-hour history graph — our own samples since launch, one per refresh.
+        let graphHeight = size * 0.42
+        let graphRect = CGRect(x: size * 0.04, y: size * 0.04,
+                                width: size * 0.92, height: graphHeight)
+
+        context.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 0.7))
+        context.fill(graphRect)
+
+        drawBarGraph(context: context, history: state.overlay.claudeFiveHourHistory,
+                     in: graphRect, isLoadAvg: false)
+
+        context.setStrokeColor(digitColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: graphRect.minX, y: graphRect.maxY))
+        context.addLine(to: CGPoint(x: graphRect.maxX, y: graphRect.maxY))
+        context.strokePath()
     }
 
     /// Load average screen matching wmbubble layout:

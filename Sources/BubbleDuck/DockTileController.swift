@@ -10,6 +10,7 @@ final class DockTileController {
     private var simulation: SimulationState
     private let renderer: BubbleRenderer
     private let metrics: SystemMetrics
+    private let claudeUsage = ClaudeUsageReader()
 
     /// Single reusable image view installed as the dock tile's content view.
     private let imageView = NSImageView()
@@ -52,8 +53,24 @@ final class DockTileController {
 
     /// Push a new configuration into the running simulation.
     func apply(_ config: SimulationConfig) {
+        let previous = simulation.config.claudeUsage
+        let previousReadout = simulation.config.tileReadout.source
         simulation.apply(config)
         resolveEffectivePowerMode()
+        // A settings change that alters what/where we read should take effect
+        // now rather than at the end of the current refresh interval.
+        if previous.usageFilePath != config.claudeUsage.usageFilePath
+            || previous.waterLevelSource != config.claudeUsage.waterLevelSource
+            || previous.waterColorSource != config.claudeUsage.waterColorSource
+            || previousReadout != config.tileReadout.source {
+            claudeUsage.invalidate()
+            updateClaudeUsage()
+        }
+    }
+
+    /// Snapshot of the usage integration's health, for the Settings panel.
+    var claudeUsageStatus: (snapshot: ClaudeUsageSnapshot?, error: String?) {
+        (claudeUsage.snapshot, claudeUsage.lastError)
     }
 
     /// Set a specific overlay screen.
@@ -78,10 +95,25 @@ final class DockTileController {
                 simulation.overlay.screen = .memoryInfo
                 simulation.overlay.locked = true
             case .memoryInfo:
+                // The Claude screen only joins the rotation when the feature
+                // is actually in use — otherwise it's a dead click for people
+                // who don't run Claude Code.
+                simulation.overlay.screen = claudeOverlayAvailable ? .claudeUsage : .none
+                simulation.overlay.locked = claudeOverlayAvailable
+            case .claudeUsage:
                 simulation.overlay.screen = .none
                 simulation.overlay.locked = false
             }
         }
+    }
+
+    /// True when the Claude usage overlay has any reason to exist.
+    private var claudeOverlayAvailable: Bool {
+        let cfg = simulation.config.claudeUsage
+        return cfg.waterLevelSource == .claudeFiveHour
+            || cfg.waterColorSource == .claudeWeekly
+            || simulation.config.tileReadout.source.needsClaudeUsage
+            || claudeUsage.snapshot != nil
     }
 
     func start() {
@@ -289,6 +321,10 @@ final class DockTileController {
         simulation.overlay.swapUsedBytes = snapshot.swapUsedBytes
         simulation.overlay.swapTotalBytes = snapshot.swapTotalBytes
 
+        // Claude usage — re-read at most once per configured interval
+        // (floor: 60s), independent of this 1Hz metrics tick.
+        updateClaudeUsage()
+
         // Record history sample (~1/sec like wmbubble)
         simulation.overlay.recordHistory(
             cpuLoad: snapshot.cpuLoad,
@@ -330,5 +366,19 @@ final class DockTileController {
         // Re-evaluate power mode (system Low Power may have changed) and
         // adjust the frame timer if the adaptive rate shifted.
         resolveEffectivePowerMode()
+    }
+
+    /// Re-read the Claude usage file if the refresh interval has elapsed, and
+    /// push the result into the simulation. A fresh reading also lands in the
+    /// overlay's 5-hour history buffer — that series is ours alone, since
+    /// Anthropic exposes no historical usage data.
+    private func updateClaudeUsage() {
+        let cfg = simulation.config.claudeUsage
+        let updated = claudeUsage.refresh(path: cfg.usageFilePath,
+                                          interval: cfg.effectiveRefreshSeconds)
+        simulation.claudeUsage = claudeUsage.snapshot
+        if let fiveHour = updated?.fiveHour {
+            simulation.overlay.recordClaudeUsage(fiveHourPercent: fiveHour.percentage())
+        }
     }
 }

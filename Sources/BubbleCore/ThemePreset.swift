@@ -6,6 +6,11 @@ import Foundation
 /// A named, curated `ColorTheme` that users can select from the
 /// Settings picker. Presets are immutable — selecting one copies its
 /// theme into the live config, which the user can continue to tweak.
+///
+/// Each preset carries its own five `claudeWeeklyBands`, running calm →
+/// alarming inside that palette. The band *edges* (25/50/75/90 by default)
+/// are not part of the theme — they live in `ClaudeUsageConfig`, so switching
+/// themes repaints the bands without moving where they start.
 public struct ThemePreset: Sendable, Equatable {
     public let id: String
     public let name: String
@@ -42,7 +47,15 @@ public enum ThemePresets {
             duckBody: SimColor(hex: 0xE8E08A),
             duckBill: SimColor(hex: 0xB88E30),
             duckEye:  SimColor(hex: 0x0A0A0A),
-            bubbleColor: SimColor(r: 0.70, g: 0.90, b: 0.95, a: 0.55)
+            bubbleColor: SimColor(r: 0.70, g: 0.90, b: 0.95, a: 0.55),
+            // Abyss teal rising into bioluminescent glow, then wine.
+            claudeWeeklyBands: [
+                SimColor(hex: 0x0E3542),
+                SimColor(hex: 0x145A6E),
+                SimColor(hex: 0x1E8A80),
+                SimColor(hex: 0x6B3A6E),
+                SimColor(hex: 0x8A2A55)
+            ]
         )
     )
 
@@ -60,7 +73,15 @@ public enum ThemePresets {
             duckBody: SimColor(hex: 0xF0B95D),
             duckBill: SimColor(hex: 0xD36E1A),
             duckEye:  SimColor(hex: 0x2B1A08),
-            bubbleColor: SimColor(r: 1.00, g: 0.95, b: 0.80, a: 0.6)
+            bubbleColor: SimColor(r: 1.00, g: 0.95, b: 0.80, a: 0.6),
+            // Lagoon teal through golden hour into sunset rose.
+            claudeWeeklyBands: [
+                SimColor(hex: 0x2F8080),
+                SimColor(hex: 0x479B84),
+                SimColor(hex: 0xC79A4A),
+                SimColor(hex: 0xD9713A),
+                SimColor(hex: 0xB23058)
+            ]
         )
     )
 
@@ -78,7 +99,15 @@ public enum ThemePresets {
             duckBody: SimColor(hex: 0xF7E8A1),
             duckBill: SimColor(hex: 0xE1A454),
             duckEye:  SimColor(hex: 0x2B2A30),
-            bubbleColor: SimColor(r: 1.0, g: 1.0, b: 1.0, a: 0.7)
+            bubbleColor: SimColor(r: 1.0, g: 1.0, b: 1.0, a: 0.7),
+            // Meltwater blue cooling into periwinkle, warming to dusty rose.
+            claudeWeeklyBands: [
+                SimColor(hex: 0x94C0D0),
+                SimColor(hex: 0x7FAEC6),
+                SimColor(hex: 0x8E9BC4),
+                SimColor(hex: 0xB08AAE),
+                SimColor(hex: 0xBF6A7A)
+            ]
         )
     )
 
@@ -96,7 +125,16 @@ public enum ThemePresets {
             duckBody: SimColor(hex: 0x1F1612),
             duckBill: SimColor(hex: 0xE64A16),
             duckEye:  SimColor(hex: 0xF8C72C),
-            bubbleColor: SimColor(r: 1.0, g: 0.55, b: 0.12, a: 0.6)
+            bubbleColor: SimColor(r: 1.0, g: 0.55, b: 0.12, a: 0.6),
+            // Cooled crust heating to white-hot: the hotter it glows, the
+            // less budget is left.
+            claudeWeeklyBands: [
+                SimColor(hex: 0x6B1A06),
+                SimColor(hex: 0xA33208),
+                SimColor(hex: 0xC94A10),
+                SimColor(hex: 0xE8871A),
+                SimColor(hex: 0xF0D02C)
+            ]
         )
     )
 
@@ -114,7 +152,15 @@ public enum ThemePresets {
             duckBody: SimColor(hex: 0xF0F020),
             duckBill: SimColor(hex: 0x32F0E0),
             duckEye:  SimColor(hex: 0xE93B9B),
-            bubbleColor: SimColor(r: 0.30, g: 1.0, b: 1.0, a: 0.6)
+            bubbleColor: SimColor(r: 0.30, g: 1.0, b: 1.0, a: 0.6),
+            // Full synth-wave sweep: blue, cyan, green, violet, magenta.
+            claudeWeeklyBands: [
+                SimColor(hex: 0x0C4FAA),
+                SimColor(hex: 0x1FD4E8),
+                SimColor(hex: 0x2ED08A),
+                SimColor(hex: 0x9F2ED0),
+                SimColor(hex: 0xE93B9B)
+            ]
         )
     )
 
@@ -132,7 +178,15 @@ public enum ThemePresets {
             duckBody: SimColor(hex: 0xCBB860),
             duckBill: SimColor(hex: 0x8A6A2E),
             duckEye:  SimColor(hex: 0x20180A),
-            bubbleColor: SimColor(r: 0.80, g: 0.95, b: 0.75, a: 0.55)
+            bubbleColor: SimColor(r: 0.80, g: 0.95, b: 0.75, a: 0.55),
+            // Moss drying through late summer into autumn rust.
+            claudeWeeklyBands: [
+                SimColor(hex: 0x2E5030),
+                SimColor(hex: 0x4A6B2A),
+                SimColor(hex: 0x8A8A2E),
+                SimColor(hex: 0xA85F1F),
+                SimColor(hex: 0x8B3A1A)
+            ]
         )
     )
 

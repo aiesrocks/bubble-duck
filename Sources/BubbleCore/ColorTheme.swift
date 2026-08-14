@@ -62,6 +62,11 @@ public struct ColorTheme: Sendable, Equatable, Codable {
     // Other
     public var bubbleColor: SimColor
 
+    /// Water color bands for Claude weekly usage — five colors paired with the
+    /// four thresholds in `ClaudeUsageConfig.weeklyThresholds`. Only used when
+    /// the water color source is `.claudeWeekly`.
+    public var claudeWeeklyBands: [SimColor]
+
     public init() {
         self.skyDawn = ColorTheme.defaultSkyDawn
         self.skyNoon = ColorTheme.defaultSkyNoon
@@ -73,13 +78,15 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         self.duckBill = ColorTheme.defaultDuckBill
         self.duckEye = ColorTheme.defaultDuckEye
         self.bubbleColor = ColorTheme.defaultBubbleColor
+        self.claudeWeeklyBands = ColorTheme.defaultClaudeWeeklyBands
     }
 
     public init(
         skyDawn: SimColor, skyNoon: SimColor, skyDusk: SimColor, skyNight: SimColor,
         liquidNoSwap: SimColor, liquidMaxSwap: SimColor,
         duckBody: SimColor, duckBill: SimColor, duckEye: SimColor,
-        bubbleColor: SimColor
+        bubbleColor: SimColor,
+        claudeWeeklyBands: [SimColor] = ColorTheme.defaultClaudeWeeklyBands
     ) {
         self.skyDawn = skyDawn
         self.skyNoon = skyNoon
@@ -91,6 +98,7 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         self.duckBill = duckBill
         self.duckEye = duckEye
         self.bubbleColor = bubbleColor
+        self.claudeWeeklyBands = claudeWeeklyBands
     }
 
     // MARK: - Built-in defaults (exposed for use by preset themes in #11)
@@ -105,6 +113,16 @@ public struct ColorTheme: Sendable, Equatable, Codable {
     public static let defaultDuckBill = SimColor(hex: 0xE09000)
     public static let defaultDuckEye  = SimColor(hex: 0x202020)
     public static let defaultBubbleColor = SimColor(r: 1.0, g: 1.0, b: 1.0, a: 0.6)
+
+    /// Five weekly-usage bands, calm → alarming. Band 0 matches the default
+    /// water blue so a fresh week looks exactly like a healthy system.
+    public static let defaultClaudeWeeklyBands: [SimColor] = [
+        SimColor(hex: 0x0000FF),   // < 25% — Blueberry, same as no-swap water
+        SimColor(hex: 0x0084C8),   // < 50% — ocean
+        SimColor(hex: 0x00A090),   // < 75% — teal, "keep an eye on it"
+        SimColor(hex: 0xD08000),   // < 90% — amber
+        SimColor(hex: 0xE04030)    // ≥ 90% — red, same as max-swap water
+    ]
 
     // MARK: - Color lookups
 
@@ -160,6 +178,25 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         return liquidNoSwap.lerp(to: liquidMaxSwap, t: t)
     }
 
+    /// Water color for Claude weekly usage (0...100), as discrete bands.
+    /// `thresholds` are the band edges in percent — `n` thresholds select from
+    /// the first `n + 1` colors in `claudeWeeklyBands`. A percentage below the
+    /// first threshold gets band 0; at or above the last gets the final band.
+    /// Steps rather than a gradient: the point is to read "which bracket am I
+    /// in" at a glance on a 128pt tile, not to track single percent moves.
+    public func claudeWeeklyColor(percent: Double, thresholds: [Double]) -> SimColor {
+        let bands = claudeWeeklyBands.isEmpty
+            ? ColorTheme.defaultClaudeWeeklyBands
+            : claudeWeeklyBands
+        let edges = thresholds.sorted()
+        var index = edges.count
+        for (i, edge) in edges.enumerated() where percent < edge {
+            index = i
+            break
+        }
+        return bands[min(index, bands.count - 1)]
+    }
+
     // MARK: - Codable (handles migration from the pre-#3 air/swap schema)
 
     private enum CodingKeys: String, CodingKey {
@@ -168,6 +205,7 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         case liquidNoSwap, liquidMaxSwap
         case duckBody, duckBill, duckEye
         case bubbleColor
+        case claudeWeeklyBands
         // Deprecated — still decoded for backward compatibility. Never
         // encoded; migrating decoders map these to `skyNoon` / `skyDusk`.
         case airNoSwap, airMaxSwap
@@ -211,6 +249,8 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         self.duckBill = try c.decodeIfPresent(SimColor.self, forKey: .duckBill) ?? ColorTheme.defaultDuckBill
         self.duckEye  = try c.decodeIfPresent(SimColor.self, forKey: .duckEye)  ?? ColorTheme.defaultDuckEye
         self.bubbleColor = try c.decodeIfPresent(SimColor.self, forKey: .bubbleColor) ?? ColorTheme.defaultBubbleColor
+        let bands = try c.decodeIfPresent([SimColor].self, forKey: .claudeWeeklyBands)
+        self.claudeWeeklyBands = (bands?.isEmpty == false) ? bands! : ColorTheme.defaultClaudeWeeklyBands
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -225,5 +265,6 @@ public struct ColorTheme: Sendable, Equatable, Codable {
         try c.encode(duckBill, forKey: .duckBill)
         try c.encode(duckEye,  forKey: .duckEye)
         try c.encode(bubbleColor, forKey: .bubbleColor)
+        try c.encode(claudeWeeklyBands, forKey: .claudeWeeklyBands)
     }
 }

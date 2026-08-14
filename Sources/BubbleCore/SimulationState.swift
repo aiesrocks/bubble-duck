@@ -62,6 +62,11 @@ public struct SimulationState: Sendable {
     /// `TimeOfDay.fraction(from:)`.
     public var timeOfDay: Double = 0.5
 
+    /// Latest Claude Code usage reading, or nil if the usage file is missing,
+    /// unreadable, or the integration is switched off. Refreshed at most once
+    /// a minute by the macOS layer (`ClaudeUsageReader`).
+    public var claudeUsage: ClaudeUsageSnapshot? = nil
+
     /// Battery fraction 0...1, or nil if no battery is present
     /// (desktop Mac / external source). The renderer applies
     /// `BatteryTint.apply(to:batteryFraction:)` to the water color when
@@ -97,8 +102,117 @@ public struct SimulationState: Sendable {
         duck.enabled = config.duckEnabled
     }
 
+    // MARK: - Claude usage resolution
+
+    /// The usage reading to render from, or nil when there is nothing
+    /// trustworthy to show: no reading at all, or a stale one while
+    /// `fallbackWhenStale` is on. Reset *times* stay usable even when this
+    /// returns nil — see `fiveHourWindow`.
+    public func usableClaudeUsage(now: Date = Date()) -> ClaudeUsageSnapshot? {
+        guard let usage = claudeUsage else { return nil }
+        let staleAfter = config.claudeUsage.staleAfterMinutes * 60
+        if config.claudeUsage.fallbackWhenStale,
+           usage.isStale(now: now, staleAfter: staleAfter) {
+            return nil
+        }
+        return usage
+    }
+
+    /// True when a reading exists but is older than the staleness window.
+    /// The renderer dims the countdown in this case rather than pretending.
+    public func claudeUsageIsStale(now: Date = Date()) -> Bool {
+        guard let usage = claudeUsage else { return false }
+        return usage.isStale(now: now, staleAfter: config.claudeUsage.staleAfterMinutes * 60)
+    }
+
+    /// Water level target 0...1 for the configured source. Falls back to
+    /// memory usage whenever Claude usage is selected but unavailable.
+    public func waterTarget(now: Date = Date()) -> Double {
+        switch config.claudeUsage.waterLevelSource {
+        case .memoryUsage:
+            return memoryUsage
+        case .claudeFiveHour:
+            guard let window = usableClaudeUsage(now: now)?.fiveHour else { return memoryUsage }
+            return window.percentage(now: now) / 100.0
+        }
+    }
+
+    /// Water color for the configured source, before battery tinting.
+    /// Falls back to the memory-tightness ramp when Claude weekly usage is
+    /// selected but unavailable.
+    public func waterColor(now: Date = Date()) -> SimColor {
+        switch config.claudeUsage.waterColorSource {
+        case .memoryTightness:
+            return config.theme.liquidColor(swapUsage: swapUsage)
+        case .claudeWeekly:
+            guard let window = usableClaudeUsage(now: now)?.sevenDay else {
+                return config.theme.liquidColor(swapUsage: swapUsage)
+            }
+            return config.theme.claudeWeeklyColor(
+                percent: window.percentage(now: now),
+                thresholds: config.claudeUsage.weeklyThresholds
+            )
+        }
+    }
+
+    // MARK: - Tile readout
+
+    /// Text for the tile's single always-on readout, or nil when it's switched
+    /// off or the selected Claude source has nothing to report.
+    ///
+    /// Claude sources are drawn from the raw reading rather than
+    /// `usableClaudeUsage` — a stale *countdown* is still correct, since it's
+    /// computed from an absolute reset instant. The staleness flag lets the
+    /// renderer dim the text and mark stale percentages instead of hiding
+    /// them outright.
+    public func tileReadout(now: Date = Date()) -> TileReadout? {
+        let source = config.tileReadout.source
+        let stale = claudeUsageIsStale(now: now)
+
+        func usage(_ window: ClaudeUsageWindow) -> String {
+            let text = ClaudeUsageFormat.percent(window.percentage(now: now))
+            return stale ? "~\(text)" : text
+        }
+
+        /// Optionally suppress the readout while the relevant budget is barely
+        /// touched — under the first weekly band edge. Returns true to hide.
+        func belowFirstBand(_ window: ClaudeUsageWindow) -> Bool {
+            guard config.tileReadout.hideClaudeWhenLow else { return false }
+            let edge = config.claudeUsage.weeklyThresholds.sorted().first ?? 25
+            return window.percentage(now: now) < edge
+        }
+
+        switch source {
+        case .none:
+            return nil
+        case .cpuPercent:
+            return TileReadout(text: "\(overlay.cpuPercent)%", isStale: false)
+        case .memoryPercent:
+            return TileReadout(text: ClaudeUsageFormat.percent(memoryUsage * 100), isStale: false)
+        case .claudeFiveHourUsage:
+            guard let window = claudeUsage?.fiveHour, !belowFirstBand(window) else { return nil }
+            return TileReadout(text: usage(window), isStale: stale)
+        case .claudeFiveHourCountdown:
+            guard let window = claudeUsage?.fiveHour, !belowFirstBand(window) else { return nil }
+            return TileReadout(text: ClaudeUsageFormat.countdown(window.timeUntilReset(now: now)),
+                               isStale: stale)
+        case .claudeFiveHourUsageAndCountdown:
+            guard let window = claudeUsage?.fiveHour, !belowFirstBand(window) else { return nil }
+            let countdown = ClaudeUsageFormat.countdown(window.timeUntilReset(now: now))
+            // After rollover the percentage is meaninglessly 0 and the next
+            // reset is unknown, so the countdown alone carries the message.
+            let text = window.hasRolledOver(now: now)
+                ? countdown
+                : "\(usage(window)) \(countdown)"
+            return TileReadout(text: text, isStale: stale)
+        case .claudeWeeklyUsage:
+            guard let window = claudeUsage?.sevenDay, !belowFirstBand(window) else { return nil }
+            return TileReadout(text: usage(window), isStale: stale)
+        }
+    }
+
     /// Advance the simulation by one frame.
-    public mutating func step() {
+    public mutating func step(now: Date = Date()) {
         let isLowPower = effectivePowerMode == .low || effectivePowerMode == .lowest
         let isLowest = effectivePowerMode == .lowest
 
@@ -107,9 +221,10 @@ public struct SimulationState: Sendable {
             : isLowPower ? min(30, config.maxBubbles)
             : config.maxBubbles
 
-        // Update water target from memory usage — runs in every mode so the
-        // water level still tracks RAM even with Reduce Motion on.
-        water.targetLevel = memoryUsage
+        // Update water target from the configured source (memory usage, or
+        // Claude's 5-hour window) — runs in every mode so the level keeps
+        // tracking even with Reduce Motion on.
+        water.targetLevel = waterTarget(now: now)
 
         // Bubble spawning is motion → skip when Reduce Motion is on.
         if !reduceMotion {
@@ -251,6 +366,15 @@ public struct DuckState: Sendable {
 
     // MARK: - Sleep tuning (constants, not user-facing config yet)
 
+    /// Lowest surface position the agent will follow. The water level can now
+    /// legitimately reach 0 — a freshly reset Claude 5-hour window is 0% used,
+    /// where memory usage never was — and an agent tracking a level of 0 gets
+    /// drawn centered on the tile's bottom edge, i.e. half off-canvas. This
+    /// floor lets it rest *on* the floor of an empty tank instead of sinking
+    /// through it. Sized from the largest agent silhouette (~0.12 of the
+    /// canvas below its origin).
+    public static let minimumY: Double = 0.12
+
     /// CPU load below which the system is "idle". Per aiesrocks/bubble-duck#5
     /// (user feedback on the issue bumped this from 5% to 10%).
     public static let idleCPUThreshold: Double = 0.10
@@ -331,7 +455,7 @@ public struct DuckState: Sendable {
         // from bubble-pop spikes. At high CPU the clamp is effectively gone.
         let maxStep = 0.0005 + cpu2 * 0.05  // ~0.13px idle … 13px full (on 256px canvas)
         delta = max(-maxStep, min(maxStep, delta))
-        y += delta
+        y = max(DuckState.minimumY, y + delta)
 
         // Bob amplitude scales with CPU load directly (not bubble count,
         // which saturates too early). Quadratic curve keeps low CPU calm
@@ -374,7 +498,7 @@ public struct DuckState: Sendable {
     public mutating func followWater(waterLevels: [Double]) {
         guard enabled, !waterLevels.isEmpty else { return }
         let col = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
-        y = waterLevels[col]
+        y = max(DuckState.minimumY, waterLevels[col])
         isUpsideDown = y > 0.95
     }
 }

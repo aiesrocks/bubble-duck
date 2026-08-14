@@ -65,6 +65,81 @@ struct SettingsView: View {
                 Toggle("Rain (disk I/O)", isOn: $store.config.rainEnabled)
             }
 
+            Section("Claude usage") {
+                Picker("Water level", selection: $store.config.claudeUsage.waterLevelSource) {
+                    ForEach(WaterLevelSource.allCases, id: \.self) { source in
+                        Text(source.rawValue).tag(source)
+                    }
+                }
+                Picker("Water color", selection: $store.config.claudeUsage.waterColorSource) {
+                    ForEach(WaterColorSource.allCases, id: \.self) { source in
+                        Text(source.rawValue).tag(source)
+                    }
+                }
+
+                LabeledSlider(label: "Refresh interval (s)",
+                              value: $store.config.claudeUsage.refreshSeconds,
+                              range: ClaudeUsageConfig.minimumRefreshSeconds...900,
+                              format: "%.0f")
+                LabeledSlider(label: "Treat as stale after (min)",
+                              value: $store.config.claudeUsage.staleAfterMinutes,
+                              range: 5...120, format: "%.0f")
+                Toggle("Fall back to system metrics when stale",
+                       isOn: $store.config.claudeUsage.fallbackWhenStale)
+
+                Text("Claude Code only reports usage from interactive sessions. "
+                     + "Install scripts/bubbleduck-statusline.sh as your status line to feed this.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Weekly usage bands") {
+                ForEach(0..<4) { i in
+                    LabeledSlider(
+                        label: "Band \(i + 1) edge (%)",
+                        value: thresholdBinding(i),
+                        range: 1...100, format: "%.0f"
+                    )
+                }
+                SimColorRow(label: "Under band 1",  color: bandBinding(0))
+                SimColorRow(label: "Under band 2",  color: bandBinding(1))
+                SimColorRow(label: "Under band 3",  color: bandBinding(2))
+                SimColorRow(label: "Under band 4",  color: bandBinding(3))
+                SimColorRow(label: "At or over band 4", color: bandBinding(4))
+                Text("Applies when water color is driven by Claude weekly usage. "
+                     + "Band colors come from the theme and are replaced when you pick a "
+                     + "different preset; the edges above are yours and stay put.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Tile readout") {
+                Picker("Show", selection: $store.config.tileReadout.source) {
+                    ForEach(TileReadoutSource.allCases, id: \.self) { source in
+                        Text(source.rawValue).tag(source)
+                    }
+                }
+                Picker("Position", selection: $store.config.tileReadout.position) {
+                    ForEach(TileReadoutPosition.allCases, id: \.self) { position in
+                        Text(position.rawValue).tag(position)
+                    }
+                }
+                SimColorRow(label: "Text color", color: $store.config.tileReadout.color)
+                LabeledSlider(label: "Opacity", value: $store.config.tileReadout.opacity,
+                              range: 0...1, format: "%.2f")
+                LabeledSlider(label: "Text size", value: $store.config.tileReadout.fontScale,
+                              range: 0.04...0.40, format: "%.2f")
+                Toggle("Dark backdrop behind text", isOn: $store.config.tileReadout.backdrop)
+                Toggle("Outline text for contrast", isOn: $store.config.tileReadout.outline)
+                Toggle("Dim while no overlay is showing",
+                       isOn: $store.config.tileReadout.dimWhenIdle)
+                Toggle("Hide while Claude usage is under band 1",
+                       isOn: $store.config.tileReadout.hideClaudeWhenLow)
+                Text("One line of text on the tile — the slot wmbubble used for CPU digits. "
+                     + "Hiding under band 1 uses the first weekly band edge "
+                     + "(\(Int(store.config.claudeUsage.weeklyThresholds.sorted().first ?? 25))%) "
+                     + "and applies only to the Claude sources.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Theme") {
                 Picker("Preset", selection: Binding(
                     get: { "custom" },  // we don't persist preset id; always shows Custom unless user picks one
@@ -122,6 +197,44 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 380, idealWidth: 420, minHeight: 520, idealHeight: 620)
+    }
+
+    // MARK: - Claude usage bindings
+
+    /// Binding onto one weekly threshold, kept sorted so the bands stay in
+    /// order however the sliders are dragged.
+    private func thresholdBinding(_ index: Int) -> Binding<Double> {
+        Binding(
+            get: {
+                let values = store.config.claudeUsage.weeklyThresholds
+                return index < values.count ? values[index] : Double((index + 1) * 25)
+            },
+            set: { newValue in
+                var values = store.config.claudeUsage.weeklyThresholds
+                while values.count < 4 { values.append(Double((values.count + 1) * 25)) }
+                values[index] = newValue
+                store.config.claudeUsage.weeklyThresholds = values.sorted()
+            }
+        )
+    }
+
+    private func bandBinding(_ index: Int) -> Binding<SimColor> {
+        Binding(
+            get: {
+                let bands = store.config.theme.claudeWeeklyBands
+                return index < bands.count
+                    ? bands[index]
+                    : ColorTheme.defaultClaudeWeeklyBands[index]
+            },
+            set: { newValue in
+                var bands = store.config.theme.claudeWeeklyBands
+                while bands.count < 5 {
+                    bands.append(ColorTheme.defaultClaudeWeeklyBands[bands.count])
+                }
+                bands[index] = newValue
+                store.config.theme.claudeWeeklyBands = bands
+            }
+        )
     }
 
     // MARK: - Theme import / export (aiesrocks/bubble-duck#11)

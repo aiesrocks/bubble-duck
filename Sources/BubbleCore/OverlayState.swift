@@ -8,6 +8,7 @@ public enum OverlayScreen: Sendable, Equatable {
     case none
     case loadAverage   // wmbubble: hover without shift
     case memoryInfo    // wmbubble: hover with shift
+    case claudeUsage   // BubbleDuck: 5-hour / 7-day subscription limits
 }
 
 /// Rolling history buffer for graph overlays.
@@ -63,6 +64,15 @@ public struct OverlayState: Sendable {
     public var loadHistory: HistoryBuffer = HistoryBuffer()
     public var memoryHistory: HistoryBuffer = HistoryBuffer()
 
+    /// Claude 5-hour usage history, in percent.
+    ///
+    /// Anthropic exposes no historical series — this is BubbleDuck's own
+    /// recording, one sample per usage refresh (≥ 60s apart), so a full buffer
+    /// spans roughly the last hour of *app uptime*. It restarts empty on
+    /// relaunch and has gaps whenever no interactive Claude Code session was
+    /// updating the file.
+    public var claudeFiveHourHistory: HistoryBuffer = HistoryBuffer()
+
     /// Current CPU percentage (0...100) for the gauge
     public var cpuPercent: Int = 0
 
@@ -90,5 +100,11 @@ public struct OverlayState: Sendable {
         loadHistory.push(loadAverage1)
         memoryHistory.push(memoryUsage * 100.0)
         cpuPercent = Int(cpuLoad * 100)
+    }
+
+    /// Record a Claude 5-hour usage sample. Called once per usage refresh,
+    /// not once per second — see `claudeFiveHourHistory`.
+    public mutating func recordClaudeUsage(fiveHourPercent: Double) {
+        claudeFiveHourHistory.push(max(0, min(100, fiveHourPercent)))
     }
 }

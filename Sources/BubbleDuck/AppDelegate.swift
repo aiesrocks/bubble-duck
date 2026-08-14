@@ -50,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         memInfoItem.target = self
         menu.addItem(memInfoItem)
 
+        let claudeItem = NSMenuItem(title: "Show Claude Usage",
+                                    action: #selector(showClaudeUsage), keyEquivalent: "")
+        claudeItem.target = self
+        menu.addItem(claudeItem)
+
         let hideItem = NSMenuItem(title: "Hide Overlay",
                                    action: #selector(hideOverlay), keyEquivalent: "")
         hideItem.target = self
@@ -108,6 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showMemoryInfo() {
         dockTileController?.setOverlay(.memoryInfo)
+    }
+
+    @objc private func showClaudeUsage() {
+        dockTileController?.setOverlay(.claudeUsage)
     }
 
     @objc private func hideOverlay() {
