@@ -18,6 +18,7 @@ final class SystemMetrics {
     // Previous readings for delta-based metrics
     private var prevNetBytes: (UInt64, UInt64) = (0, 0)
     private var prevDiskOps: (UInt64, UInt64) = (0, 0)
+    private var prevDiskBytes: (UInt64, UInt64) = (0, 0)
     private var prevTime: CFAbsoluteTime = 0
 
     struct Snapshot: Sendable {
@@ -34,6 +35,7 @@ final class SystemMetrics {
         // Agent speed metrics
         var networkBytesPerSec: Double = 0   // total in+out bytes/sec
         var diskIOPS: Double = 0             // total read+write ops/sec
+        var diskBytesPerSec: Double = 0      // total read+write bytes/sec
         var gpuUtilization: Double = 0       // 0.0...1.0
 
         // Memory pressure (aiesrocks/bubble-duck#22):
@@ -54,7 +56,7 @@ final class SystemMetrics {
         let (memUsage, memUsed, memTotal, memComponents) = readMemoryDetailed()
         let (swapUsage, swapUsed, swapTotal) = readSwapDetailed()
         let loadAvgs = readLoadAverages()
-        let (netBps, diskOps) = readDeltaMetrics()
+        let (netBps, diskOps, diskBps) = readDeltaMetrics()
 
         let tightness = MemoryPressure.tightness(
             active: memComponents.active,
@@ -77,6 +79,7 @@ final class SystemMetrics {
             swapTotalBytes: swapTotal,
             networkBytesPerSec: netBps,
             diskIOPS: diskOps,
+            diskBytesPerSec: diskBps,
             gpuUtilization: readGPUUtilization(),
             memoryTightness: tightness,
             memoryPressureZone: MemoryPressure.zone(for: tightness),
@@ -232,7 +235,8 @@ final class SystemMetrics {
 
     // MARK: - Delta-based metrics (network bytes/sec, disk IOPS)
 
-    private func readDeltaMetrics() -> (networkBytesPerSec: Double, diskIOPS: Double) {
+    private func readDeltaMetrics() -> (networkBytesPerSec: Double, diskIOPS: Double,
+                                       diskBytesPerSec: Double) {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = prevTime > 0 ? now - prevTime : 1.0
         defer { prevTime = now }
@@ -265,7 +269,20 @@ final class SystemMetrics {
             : 0
         prevDiskOps = diskOps
 
-        return (netBps, iops)
+        // Disk throughput — bytes moved rather than operations issued. A few
+        // large sequential reads and a storm of tiny ones look nothing alike,
+        // so both are offered as separate metrics.
+        let diskBytes = readDiskBytes()
+        let diskBps = prevDiskBytes.0 > 0
+            ? MetricsDelta.rate(
+                currentA: diskBytes.0, prevA: prevDiskBytes.0,
+                currentB: diskBytes.1, prevB: prevDiskBytes.1,
+                elapsed: elapsed
+            )
+            : 0
+        prevDiskBytes = diskBytes
+
+        return (netBps, iops, diskBps)
     }
 
     // MARK: - Network I/O (cumulative bytes via sysctl NET_RT_IFLIST2)
@@ -294,7 +311,18 @@ final class SystemMetrics {
 
     // MARK: - Disk IOPS (cumulative ops via IOKit IOBlockStorageDriver)
 
+    /// Cumulative bytes read/written, from the same IOKit statistics dict as
+    /// the operation counters.
+    private func readDiskBytes() -> (reads: UInt64, writes: UInt64) {
+        readDiskStatistics(readKey: "Bytes (Read)", writeKey: "Bytes (Write)")
+    }
+
     private func readDiskOps() -> (reads: UInt64, writes: UInt64) {
+        readDiskStatistics(readKey: "Operations (Read)", writeKey: "Operations (Write)")
+    }
+
+    private func readDiskStatistics(readKey: String,
+                                    writeKey: String) -> (reads: UInt64, writes: UInt64) {
         var totalReads: UInt64 = 0, totalWrites: UInt64 = 0
         guard let matching = IOServiceMatching("IOBlockStorageDriver") else { return (0, 0) }
         var iterator: io_iterator_t = 0
@@ -309,8 +337,8 @@ final class SystemMetrics {
             guard let props = IORegistryEntryCreateCFProperty(
                 service, "Statistics" as CFString, kCFAllocatorDefault, 0
             )?.takeRetainedValue() as? [String: Any] else { continue }
-            if let r = props["Operations (Read)"] as? UInt64 { totalReads += r }
-            if let w = props["Operations (Write)"] as? UInt64 { totalWrites += w }
+            if let r = props[readKey] as? UInt64 { totalReads += r }
+            if let w = props[writeKey] as? UInt64 { totalWrites += w }
         }
         return (totalReads, totalWrites)
     }

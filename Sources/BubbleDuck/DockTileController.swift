@@ -375,8 +375,10 @@ final class DockTileController {
         //   network: 0 bytes/sec = 0, ~10 MB/sec+ = 1.0
         //   disk:    0 IOPS = 0, ~5000+ IOPS = 1.0
         //   gpu:     already 0...1
+        //   throughput: 0 bytes/sec = 0, ~500 MB/sec+ = 1.0
         simulation.networkIntensity = min(1.0, snapshot.networkBytesPerSec / 10_000_000)
         simulation.diskIntensity = min(1.0, snapshot.diskIOPS / 5000)
+        simulation.diskThroughputIntensity = min(1.0, snapshot.diskBytesPerSec / 500_000_000)
         simulation.gpuUtilization = snapshot.gpuUtilization
 
         // Drive floating agent speed from the configured metric
@@ -389,15 +391,10 @@ final class DockTileController {
             simulation.duck.speedFactor = simulation.gpuUtilization
         }
 
-        // Rain intensity (aiesrocks/bubble-duck#10) — driven by disk IOPS,
-        // independent of the agent speed metric. Quiet below 500 IOPS so
-        // idle systems don't spontaneously rain; saturates at ~5000 IOPS.
-        let rainFloor: Double = 500
-        let rainCeiling: Double = 5000
-        let excess = max(0, snapshot.diskIOPS - rainFloor)
-        simulation.rainIntensity = simulation.config.rainEnabled
-            ? min(1.0, excess / (rainCeiling - rainFloor))
-            : 0
+        // Rain intensity (aiesrocks/bubble-duck#10) — driven by whichever
+        // metric the user picked, disk IOPS by default. The floor and ramp
+        // live in BubbleCore so they're testable.
+        simulation.rainIntensity = simulation.rainSpawnIntensity()
 
         // Update activity level for adaptive frame rate (Auto mode).
         // Smoothed so fps doesn't oscillate on every metrics tick.

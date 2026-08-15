@@ -60,10 +60,13 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     /// Show rain driven by disk IOPS.
     public var rainEnabled: Bool = true
 
-    // MARK: - Bubbles
+    // MARK: - Bubbles and rain
 
     /// Which metric drives the bubble spawn rate.
-    public var bubbleMetric: BubbleMetric = .cpuLoad
+    public var bubbleMetric: MetricSource = .cpuLoad
+
+    /// Which metric drives the rain spawn rate.
+    public var rainMetric: MetricSource = .diskIOPS
 
     /// Keep the tank deep enough for the agent to float in.
     ///
@@ -111,7 +114,7 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     private enum CodingKeys: String, CodingKey {
         case maxBubbles, gravity, rippleStrength, volatility, viscosity, speedLimit
         case duckEnabled, agentType, agentSizeScale, speedMetric, rainEnabled
-        case keepAgentAfloat, hoverReactionEnabled, bubbleMetric
+        case keepAgentAfloat, hoverReactionEnabled, bubbleMetric, rainMetric
         case powerMode, claudeUsage, tileReadout, theme
     }
 
@@ -130,7 +133,8 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
         speedMetric    = try c.decodeIfPresent(SpeedMetric.self, forKey: .speedMetric) ?? d.speedMetric
         rainEnabled    = try c.decodeIfPresent(Bool.self,   forKey: .rainEnabled)    ?? d.rainEnabled
         keepAgentAfloat = try c.decodeIfPresent(Bool.self, forKey: .keepAgentAfloat) ?? d.keepAgentAfloat
-        bubbleMetric   = try c.decodeIfPresent(BubbleMetric.self, forKey: .bubbleMetric) ?? d.bubbleMetric
+        bubbleMetric   = try c.decodeIfPresent(MetricSource.self, forKey: .bubbleMetric) ?? d.bubbleMetric
+        rainMetric     = try c.decodeIfPresent(MetricSource.self, forKey: .rainMetric) ?? d.rainMetric
         hoverReactionEnabled = try c.decodeIfPresent(Bool.self, forKey: .hoverReactionEnabled) ?? d.hoverReactionEnabled
         powerMode      = try c.decodeIfPresent(PowerMode.self, forKey: .powerMode)   ?? d.powerMode
         claudeUsage    = try c.decodeIfPresent(ClaudeUsageConfig.self, forKey: .claudeUsage) ?? d.claudeUsage

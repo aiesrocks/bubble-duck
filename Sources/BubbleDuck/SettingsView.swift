@@ -165,7 +165,7 @@ struct SettingsView: View {
             ),
             SettingsGroup(
                 id: "rain", title: "Rain",
-                keywords: "disk iops weather drops",
+                keywords: "disk iops throughput cpu gpu network claude weather drops",
                 advancedOnly: false, content: { AnyView(rainGroup) }
             ),
             SettingsGroup(
@@ -288,7 +288,7 @@ struct SettingsView: View {
 
     @ViewBuilder private var bubbleGroup: some View {
         Picker("Driven by", selection: $store.config.bubbleMetric) {
-            ForEach(BubbleMetric.allCases, id: \.self) { metric in
+            ForEach(MetricSource.allCases, id: \.self) { metric in
                 Text(metric.rawValue).tag(metric)
             }
         }
@@ -306,10 +306,17 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var rainGroup: some View {
-        Toggle("Rain (disk I/O)", isOn: $store.config.rainEnabled)
+        Toggle("Show rain", isOn: $store.config.rainEnabled)
+        Picker("Driven by", selection: $store.config.rainMetric) {
+            ForEach(MetricSource.allCases, id: \.self) { metric in
+                Text(metric.rawValue).tag(metric)
+            }
+        }
+        .disabled(!store.config.rainEnabled)
         if advanced {
-            Text("Starts at 500 IOPS, saturates at 5000. Suppressed in Low and "
-                 + "Lowest power modes.")
+            Text("Quiet below 10% of the chosen metric, then ramping to full — "
+                 + "with disk IOPS that's the original 500 to 5000 range. "
+                 + "Suppressed in Low and Lowest power modes.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

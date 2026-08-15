@@ -560,6 +560,53 @@ final class ClaudeUsageTests: XCTestCase {
         XCTAssertEqual(s.bubbleIntensity(now: now), 0.35, accuracy: 1e-9)
     }
 
+    // MARK: - Rain metric
+
+    func testRainDefaultsToDiskIOPSAndMatchesTheOldRamp() {
+        var s = state { _ in }
+        XCTAssertEqual(s.config.rainMetric, .diskIOPS)
+
+        // The old code was quiet below 500 IOPS and saturated at 5000, with
+        // diskIntensity = iops / 5000.
+        func rain(atIOPS iops: Double) -> Double {
+            s.diskIntensity = min(1.0, iops / 5000)
+            return s.rainSpawnIntensity(now: now)
+        }
+        XCTAssertEqual(rain(atIOPS: 0), 0, accuracy: 1e-9)
+        XCTAssertEqual(rain(atIOPS: 500), 0, accuracy: 1e-9)
+        XCTAssertEqual(rain(atIOPS: 2750), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(rain(atIOPS: 5000), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(rain(atIOPS: 9000), 1.0, accuracy: 1e-9)
+    }
+
+    func testRainFollowsTheChosenMetric() {
+        var s = state { $0.rainMetric = .diskThroughput }
+        s.diskIntensity = 1.0            // ignored
+        s.diskThroughputIntensity = 0.55
+        XCTAssertEqual(s.rainSpawnIntensity(now: now), (0.55 - 0.1) / 0.9, accuracy: 1e-9)
+
+        var claude = state { $0.rainMetric = .claudeWeekly }
+        claude.claudeUsage = snapshot(sevenDay: window(percent: 82, resetsInSeconds: 86_400))
+        XCTAssertEqual(claude.rainSpawnIntensity(now: now), (0.82 - 0.1) / 0.9, accuracy: 1e-9)
+    }
+
+    func testRainIsZeroWhenDisabled() {
+        var s = state {
+            $0.rainEnabled = false
+            $0.rainMetric = .cpuLoad
+        }
+        s.cpuLoad = 1.0
+        XCTAssertEqual(s.rainSpawnIntensity(now: now), 0)
+    }
+
+    func testDiskThroughputIsASeparateMetricFromIOPS() {
+        var s = state { _ in }
+        s.diskIntensity = 0.2
+        s.diskThroughputIntensity = 0.9
+        XCTAssertEqual(s.intensity(of: .diskIOPS, now: now), 0.2, accuracy: 1e-9)
+        XCTAssertEqual(s.intensity(of: .diskThroughput, now: now), 0.9, accuracy: 1e-9)
+    }
+
     // MARK: - Keeping the agent afloat
 
     func testEmptyTankIsFlooredToTheAgentsDraught() {

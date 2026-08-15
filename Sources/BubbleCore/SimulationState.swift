@@ -62,6 +62,7 @@ public struct SimulationState: Sendable {
     public var gpuUtilization: Double = 0.0
     public var networkIntensity: Double = 0.0
     public var diskIntensity: Double = 0.0
+    public var diskThroughputIntensity: Double = 0.0
 
     /// Fraction-of-day used to blend between the theme's four sky anchors
     /// (aiesrocks/bubble-duck#3). 0 = midnight, 0.25 = dawn, 0.5 = noon,
@@ -160,11 +161,11 @@ public struct SimulationState: Sendable {
         return max(target, agentDraught)
     }
 
-    /// Bubble spawn probability 0...1 for the configured metric. Claude
-    /// sources fall back to CPU load when there's no usable reading, so the
-    /// tile keeps bubbling rather than going flat.
-    public func bubbleIntensity(now: Date = Date()) -> Double {
-        switch config.bubbleMetric {
+    /// Normalized 0...1 value of any metric. Claude sources fall back to CPU
+    /// load when there's no usable reading, so a tile driven by them keeps
+    /// moving rather than going flat.
+    public func intensity(of metric: MetricSource, now: Date = Date()) -> Double {
+        switch metric {
         case .cpuLoad:
             return cpuLoad
         case .claudeFiveHour:
@@ -179,8 +180,32 @@ public struct SimulationState: Sendable {
             return networkIntensity
         case .diskIOPS:
             return diskIntensity
+        case .diskThroughput:
+            return diskThroughputIntensity
         }
     }
+
+    /// Bubble spawn probability 0...1 for the configured metric.
+    public func bubbleIntensity(now: Date = Date()) -> Double {
+        intensity(of: config.bubbleMetric, now: now)
+    }
+
+    /// Rain spawn intensity 0...1 for the configured metric, or 0 when rain is
+    /// switched off.
+    ///
+    /// Quiet below `rainFloor` so an idle machine doesn't drizzle, then ramps
+    /// to full over the remaining range. With the default disk-IOPS metric
+    /// that reproduces the original behaviour exactly: the 0.1 floor is 500
+    /// IOPS of the 5000 IOPS ceiling, saturating at 5000.
+    public func rainSpawnIntensity(now: Date = Date()) -> Double {
+        guard config.rainEnabled else { return 0 }
+        let value = intensity(of: config.rainMetric, now: now)
+        return max(0, (value - SimulationState.rainFloor)
+                      / (1 - SimulationState.rainFloor))
+    }
+
+    /// Normalized level below which no rain falls.
+    public static let rainFloor: Double = 0.1
 
     /// How much water the agent needs under it to float rather than hover.
     /// Zero when the agent is hidden or the floor is switched off.
