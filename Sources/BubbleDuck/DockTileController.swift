@@ -370,20 +370,24 @@ final class DockTileController {
             memoryUsage: snapshot.memoryUsage
         )
 
+        // Normalize the I/O metrics once — the agent's speed and the bubble
+        // spawn rate can each be pointed at any of them.
+        //   network: 0 bytes/sec = 0, ~10 MB/sec+ = 1.0
+        //   disk:    0 IOPS = 0, ~5000+ IOPS = 1.0
+        //   gpu:     already 0...1
+        simulation.networkIntensity = min(1.0, snapshot.networkBytesPerSec / 10_000_000)
+        simulation.diskIntensity = min(1.0, snapshot.diskIOPS / 5000)
+        simulation.gpuUtilization = snapshot.gpuUtilization
+
         // Drive floating agent speed from the configured metric
-        let speedFactor: Double
         switch simulation.config.speedMetric {
         case .networkIO:
-            // Normalize: 0 bytes/sec = 0, ~10 MB/sec+ = 1.0
-            speedFactor = min(1.0, snapshot.networkBytesPerSec / 10_000_000)
+            simulation.duck.speedFactor = simulation.networkIntensity
         case .diskIOPS:
-            // Normalize: 0 IOPS = 0, ~5000+ IOPS = 1.0
-            speedFactor = min(1.0, snapshot.diskIOPS / 5000)
+            simulation.duck.speedFactor = simulation.diskIntensity
         case .gpuUtilization:
-            // Already 0.0...1.0
-            speedFactor = snapshot.gpuUtilization
+            simulation.duck.speedFactor = simulation.gpuUtilization
         }
-        simulation.duck.speedFactor = speedFactor
 
         // Rain intensity (aiesrocks/bubble-duck#10) — driven by disk IOPS,
         // independent of the agent speed metric. Quiet below 500 IOPS so
@@ -399,7 +403,8 @@ final class DockTileController {
         // Smoothed so fps doesn't oscillate on every metrics tick.
         let bubbleRatio = Double(simulation.bubbleSystem.bubbles.count)
             / Double(max(1, simulation.config.maxBubbles))
-        let rawActivity = max(snapshot.cpuLoad, simulation.rainIntensity, bubbleRatio)
+        let rawActivity = max(snapshot.cpuLoad, simulation.rainIntensity, bubbleRatio,
+                              simulation.bubbleIntensity())
         activityLevel += (rawActivity - activityLevel) * 0.3
 
         // Re-evaluate power mode (system Low Power may have changed) and

@@ -56,6 +56,13 @@ public struct SimulationState: Sendable {
     public var memoryUsage: Double = 0.0
     public var swapUsage: Double = 0.0
 
+    /// Normalized 0...1 metrics the macOS layer has already scaled, so the
+    /// simulation can select between them without knowing about bytes/sec or
+    /// IOPS ceilings. Feed bubble spawning (see `bubbleIntensity(now:)`).
+    public var gpuUtilization: Double = 0.0
+    public var networkIntensity: Double = 0.0
+    public var diskIntensity: Double = 0.0
+
     /// Fraction-of-day used to blend between the theme's four sky anchors
     /// (aiesrocks/bubble-duck#3). 0 = midnight, 0.25 = dawn, 0.5 = noon,
     /// 0.75 = dusk. Updated from the macOS layer once per metrics tick via
@@ -133,14 +140,53 @@ public struct SimulationState: Sendable {
 
     /// Water level target 0...1 for the configured source. Falls back to
     /// memory usage whenever Claude usage is selected but unavailable.
+    ///
+    /// The result is floored at the agent's draught when `keepAgentAfloat` is
+    /// on: agents are drawn partially submerged, so an empty tank leaves them
+    /// hovering with nothing beneath. Only the *water* is floored — the
+    /// readout and overlays report the real figure.
     public func waterTarget(now: Date = Date()) -> Double {
+        let target: Double
         switch config.claudeUsage.waterLevelSource {
         case .memoryUsage:
-            return memoryUsage
+            target = memoryUsage
         case .claudeFiveHour:
-            guard let window = usableClaudeUsage(now: now)?.fiveHour else { return memoryUsage }
-            return window.percentage(now: now) / 100.0
+            if let window = usableClaudeUsage(now: now)?.fiveHour {
+                target = window.percentage(now: now) / 100.0
+            } else {
+                target = memoryUsage
+            }
         }
+        return max(target, agentDraught)
+    }
+
+    /// Bubble spawn probability 0...1 for the configured metric. Claude
+    /// sources fall back to CPU load when there's no usable reading, so the
+    /// tile keeps bubbling rather than going flat.
+    public func bubbleIntensity(now: Date = Date()) -> Double {
+        switch config.bubbleMetric {
+        case .cpuLoad:
+            return cpuLoad
+        case .claudeFiveHour:
+            guard let window = usableClaudeUsage(now: now)?.fiveHour else { return cpuLoad }
+            return window.percentage(now: now) / 100.0
+        case .claudeWeekly:
+            guard let window = usableClaudeUsage(now: now)?.sevenDay else { return cpuLoad }
+            return window.percentage(now: now) / 100.0
+        case .gpuUtilization:
+            return gpuUtilization
+        case .networkIO:
+            return networkIntensity
+        case .diskIOPS:
+            return diskIntensity
+        }
+    }
+
+    /// How much water the agent needs under it to float rather than hover.
+    /// Zero when the agent is hidden or the floor is switched off.
+    public var agentDraught: Double {
+        guard config.keepAgentAfloat, duck.enabled else { return 0 }
+        return duck.minimumY
     }
 
     /// Water color for the configured source, before battery tinting.
@@ -265,7 +311,7 @@ public struct SimulationState: Sendable {
         // Bubble spawning is motion → skip when Reduce Motion is on.
         if !reduceMotion {
             if bubbleSystem.bubbles.count < effectiveMaxBubbles,
-               let col = bubbleSystem.maybeSpawn(cpuLoad: cpuLoad, columnCount: water.columnCount) {
+               let col = bubbleSystem.maybeSpawn(intensity: bubbleIntensity(now: now), columnCount: water.columnCount) {
                 water.displace(column: col, amount: -bubbleSystem.rippleStrength)
             }
             // Rain spawn (aiesrocks/bubble-duck#10): suppressed in Low/Lowest.

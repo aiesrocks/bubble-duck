@@ -28,14 +28,16 @@ public struct BubbleSystem: Sendable {
 
     public init() {}
 
-    /// Possibly spawn a new bubble based on CPU load (0.0...1.0).
-    /// Returns the column index if a bubble was created (for water displacement).
+    /// Possibly spawn a new bubble. `intensity` (0.0...1.0) is the spawn
+    /// probability — CPU load by default, but any metric the user picks (see
+    /// `BubbleMetric`). Returns the column index if a bubble was created, for
+    /// water displacement.
     @discardableResult
-    public mutating func maybeSpawn(cpuLoad: Double, columnCount: Int) -> Int? {
+    public mutating func maybeSpawn(intensity: Double, columnCount: Int) -> Int? {
         guard bubbles.count < maxBubbles else { return nil }
 
-        guard cpuLoad > 0 else { return nil }
-        let spawnChance = cpuLoad * 100.0
+        guard intensity > 0 else { return nil }
+        let spawnChance = intensity * 100.0
         let roll = Double(Int.random(in: 0...100))
         guard roll <= spawnChance else { return nil }
 

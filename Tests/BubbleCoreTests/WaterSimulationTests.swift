@@ -46,7 +46,7 @@ struct BubbleSystemTests {
     func noBubblesAtZeroCPU() {
         var system = BubbleSystem()
         for _ in 0..<100 {
-            system.maybeSpawn(cpuLoad: 0.0, columnCount: 64)
+            system.maybeSpawn(intensity: 0.0, columnCount: 64)
         }
         #expect(system.bubbles.isEmpty)
     }
@@ -55,7 +55,7 @@ struct BubbleSystemTests {
     func bubblesSpawnAtFullCPU() {
         var system = BubbleSystem()
         for _ in 0..<10 {
-            system.maybeSpawn(cpuLoad: 1.0, columnCount: 64)
+            system.maybeSpawn(intensity: 1.0, columnCount: 64)
         }
         #expect(!system.bubbles.isEmpty)
     }
@@ -65,7 +65,7 @@ struct BubbleSystemTests {
         var system = BubbleSystem()
         system.maxBubbles = 5
         for _ in 0..<100 {
-            system.maybeSpawn(cpuLoad: 1.0, columnCount: 64)
+            system.maybeSpawn(intensity: 1.0, columnCount: 64)
         }
         #expect(system.bubbles.count <= 5)
     }

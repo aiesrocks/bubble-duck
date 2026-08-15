@@ -81,9 +81,16 @@ This separation means the simulation logic can be edited and tested from any env
 
 Right-click the dock icon → **Settings** to open the settings panel.
 
-- **Floating Agent**: choose character type and which metric drives speed
-- **Physics**: max bubbles, gravity, ripple strength, volatility, viscosity, speed limit
-- **Colors**: water, air, duck, and bubble colors (with swap-based interpolation)
+Settings are grouped by the visual they affect, each group collapsible and
+searchable, with a **Simple / Advanced** switch at the top (Simple is the
+default and shows only the agent, the theme, and which metric drives each
+behaviour).
+
+- **Agent**: character, speed metric, size, hover reaction
+- **Water level / Water color / Bubbles / Rain**: the metric driving each, plus
+  that visual's own physics and colors under Advanced
+- **Sky**: dawn/noon/dusk/night anchors blended by local time
+- **Water physics**: volatility, viscosity, speed limit
 - **Overlays**: click the dock icon to cycle through load average, memory info, and Claude usage screens
 - **Claude usage**: drive the water level from your Claude 5-hour window and the water color from your weekly window
 - **Tile readout**: the one always-on line of text — CPU %, memory %, or a Claude figure such as `42% 4:12` — with configurable color, opacity, size, position and backdrop

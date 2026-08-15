@@ -516,6 +516,101 @@ final class ClaudeUsageTests: XCTestCase {
         XCTAssertEqual(duck.y, DuckState.baseMinimumY)
     }
 
+    // MARK: - Bubble metric
+
+    func testBubblesDefaultToCPU() {
+        var s = state { _ in }
+        s.cpuLoad = 0.42
+        XCTAssertEqual(s.config.bubbleMetric, .cpuLoad)
+        XCTAssertEqual(s.bubbleIntensity(now: now), 0.42, accuracy: 1e-9)
+    }
+
+    func testBubblesFollowTheChosenMetric() {
+        var s = state { $0.bubbleMetric = .gpuUtilization }
+        s.cpuLoad = 0.1
+        s.gpuUtilization = 0.8
+        s.networkIntensity = 0.3
+        s.diskIntensity = 0.6
+        XCTAssertEqual(s.bubbleIntensity(now: now), 0.8, accuracy: 1e-9)
+
+        var net = state { $0.bubbleMetric = .networkIO }
+        net.networkIntensity = 0.3
+        XCTAssertEqual(net.bubbleIntensity(now: now), 0.3, accuracy: 1e-9)
+
+        var disk = state { $0.bubbleMetric = .diskIOPS }
+        disk.diskIntensity = 0.6
+        XCTAssertEqual(disk.bubbleIntensity(now: now), 0.6, accuracy: 1e-9)
+    }
+
+    func testBubblesFromClaudeWindows() {
+        var five = state { $0.bubbleMetric = .claudeFiveHour }
+        five.claudeUsage = snapshot(fiveHour: window(percent: 70, resetsInSeconds: 3600),
+                                    sevenDay: window(percent: 20, resetsInSeconds: 86_400))
+        XCTAssertEqual(five.bubbleIntensity(now: now), 0.70, accuracy: 1e-9)
+
+        var weekly = state { $0.bubbleMetric = .claudeWeekly }
+        weekly.claudeUsage = snapshot(fiveHour: window(percent: 70, resetsInSeconds: 3600),
+                                      sevenDay: window(percent: 20, resetsInSeconds: 86_400))
+        XCTAssertEqual(weekly.bubbleIntensity(now: now), 0.20, accuracy: 1e-9)
+    }
+
+    func testBubblesFallBackToCPUWithoutUsageData() {
+        var s = state { $0.bubbleMetric = .claudeFiveHour }
+        s.cpuLoad = 0.35
+        XCTAssertEqual(s.bubbleIntensity(now: now), 0.35, accuracy: 1e-9)
+    }
+
+    // MARK: - Keeping the agent afloat
+
+    func testEmptyTankIsFlooredToTheAgentsDraught() {
+        // A freshly reset 5-hour window reads 0%, which would leave a
+        // partly-submerged agent hovering over an empty tank.
+        var s = state {
+            $0.claudeUsage.waterLevelSource = .claudeFiveHour
+            $0.keepAgentAfloat = true
+        }
+        s.claudeUsage = snapshot(fiveHour: window(percent: 0, resetsInSeconds: 3600))
+        XCTAssertEqual(s.waterTarget(now: now), s.duck.minimumY, accuracy: 1e-9)
+    }
+
+    func testFloorScalesWithAgentSize() {
+        var config = SimulationConfig.default
+        config.agentSizeScale = 2.0
+        config.claudeUsage.waterLevelSource = .claudeFiveHour
+        var s = SimulationState(canvasSize: 256, config: config)
+        s.memoryUsage = 0
+        s.claudeUsage = snapshot(fiveHour: window(percent: 0, resetsInSeconds: 3600))
+        XCTAssertEqual(s.waterTarget(now: now), DuckState.baseMinimumY * 2.0, accuracy: 1e-9)
+    }
+
+    func testFloorNeverRaisesARealReading() {
+        var s = state {
+            $0.claudeUsage.waterLevelSource = .claudeFiveHour
+            $0.keepAgentAfloat = true
+        }
+        s.claudeUsage = snapshot(fiveHour: window(percent: 60, resetsInSeconds: 3600))
+        XCTAssertEqual(s.waterTarget(now: now), 0.60, accuracy: 1e-9)
+    }
+
+    func testFloorIsOffWhenDisabledOrAgentHidden() {
+        var s = state {
+            $0.claudeUsage.waterLevelSource = .claudeFiveHour
+            $0.keepAgentAfloat = false
+        }
+        s.memoryUsage = 0
+        s.claudeUsage = snapshot(fiveHour: window(percent: 0, resetsInSeconds: 3600))
+        XCTAssertEqual(s.waterTarget(now: now), 0, accuracy: 1e-9)
+
+        var hidden = state {
+            $0.claudeUsage.waterLevelSource = .claudeFiveHour
+            $0.keepAgentAfloat = true
+            $0.duckEnabled = false
+        }
+        hidden.memoryUsage = 0
+        hidden.claudeUsage = snapshot(fiveHour: window(percent: 0, resetsInSeconds: 3600))
+        XCTAssertEqual(hidden.waterTarget(now: now), 0, accuracy: 1e-9)
+    }
+
     // MARK: - Agent size
 
     func testFloorGrowsWithAgentSize() {

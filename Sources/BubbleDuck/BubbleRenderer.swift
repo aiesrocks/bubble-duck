@@ -686,12 +686,11 @@ struct BubbleRenderer {
         let billJoint = CGPoint(x: 0.56, y: 0.29)
         let billShadow = blend(theme.duckBill, with: SimColor(r: 0, g: 0, b: 0), t: 0.25)
 
-        if quack > 0.01 {
-            context.setFillColor(CGColor(red: 0.45, green: 0.16, blue: 0.18, alpha: 1))
-            context.addPath(gapeWedge(hinge: billJoint,
-                                      edge: CGPoint(x: 0.93, y: 0.27), to: billAngle))
-            context.fillPath()
-        }
+        // Degenerate at rest, so no guard is needed and nothing pops.
+        context.setFillColor(CGColor(red: 0.45, green: 0.16, blue: 0.18, alpha: 1))
+        context.addPath(gapeWedge(hinge: billJoint,
+                                  edge: CGPoint(x: 0.93, y: 0.27), to: billAngle))
+        context.fillPath()
 
         // Lower bill
         withHinge(context, at: billJoint, angle: billAngle) {
@@ -765,16 +764,17 @@ struct BubbleRenderer {
         let mandarinOpen = duck.mouth.openness
         let mandarinAngle = -0.40 * mandarinOpen
         let mandarinJoint = CGPoint(x: 0.53, y: 0.25)
-        if mandarinOpen > 0.01 {
-            context.setFillColor(CGColor(red: 0.42, green: 0.10, blue: 0.10, alpha: 1))
-            context.addPath(gapeWedge(hinge: mandarinJoint,
-                                      edge: CGPoint(x: 0.82, y: 0.24), to: mandarinAngle))
-            context.fillPath()
+        // Drawn every frame — a mandible that only exists mid-animation pops
+        // in and out. Closed, the wedge is degenerate and the mandible hides
+        // under the bill.
+        context.setFillColor(CGColor(red: 0.42, green: 0.10, blue: 0.10, alpha: 1))
+        context.addPath(gapeWedge(hinge: mandarinJoint,
+                                  edge: CGPoint(x: 0.82, y: 0.24), to: mandarinAngle))
+        context.fillPath()
 
-            withHinge(context, at: mandarinJoint, angle: mandarinAngle) {
-                context.setFillColor(CGColor(red: 0.72, green: 0.12, blue: 0.08, alpha: 1))
-                context.fillEllipse(in: CGRect(x: 0.54, y: 0.19, width: 0.26, height: 0.05))
-            }
+        withHinge(context, at: mandarinJoint, angle: mandarinAngle) {
+            context.setFillColor(CGColor(red: 0.72, green: 0.12, blue: 0.08, alpha: 1))
+            context.fillEllipse(in: CGRect(x: 0.54, y: 0.19, width: 0.26, height: 0.05))
         }
         context.setFillColor(CGColor(red: 0.9, green: 0.15, blue: 0.1, alpha: 1))
         context.fillEllipse(in: CGRect(x: 0.52, y: 0.2, width: 0.3, height: 0.12))
@@ -927,13 +927,14 @@ struct BubbleRenderer {
         let croak = duck.mouth.openness
         let croakJoint = CGPoint(x: 0.08, y: 0.12)
         let croakAngle = -0.50 * croak
-        if croak > 0.01 {
+        do {
             context.setFillColor(CGColor(red: 0.55, green: 0.20, blue: 0.24, alpha: 1))
             context.addPath(gapeWedge(hinge: croakJoint,
                                       edge: CGPoint(x: 0.42, y: 0.12), to: croakAngle))
             context.fillPath()
 
-            // Lower lip, swung about the joint
+            // Lower lip, drawn every frame; at rest it lands exactly on the
+            // closed smile curve.
             withHinge(context, at: croakJoint, angle: croakAngle) {
                 context.setStrokeColor(CGColor(red: 0.2, green: 0.5, blue: 0.0, alpha: 1))
                 context.setLineWidth(0.03)
@@ -985,7 +986,13 @@ struct BubbleRenderer {
         let lowerAngle = -0.48 * gape           // ~27 degrees down
         let upperAngle = 0.34 * gape            // ~19 degrees up
 
-        if gape > 0.01 {
+        // The cavity and jaw are drawn every frame, not only while the mouth is
+        // open: a jaw that exists only during the animation pops into being on
+        // the first frame and vanishes on the last. At gape 0 the wedges below
+        // are degenerate (zero area) and the jaw sits in its closed position
+        // under the muzzle, so drawing them costs nothing and the transition
+        // is continuous.
+        do {
             // Inside of the mouth, in two depths: the mouth proper between the
             // two swung jaw lines, and a darker throat nearer the joint. Two
             // flat tones give the cavity depth without adding small details
@@ -1221,13 +1228,14 @@ struct BubbleRenderer {
         let beakJoint = CGPoint(x: -0.05, y: 0.355)
         let beakAngle = -0.60 * gape
 
-        if gape > 0.01 {
+        do {
             context.setFillColor(CGColor(red: 0.40, green: 0.14, blue: 0.14, alpha: 1))
             context.addPath(gapeWedge(hinge: beakJoint,
                                       edge: CGPoint(x: 0.06, y: 0.33), to: beakAngle))
             context.fillPath()
 
-            // Lower mandible, swung about the joint
+            // Lower mandible, swung about the joint. Drawn every frame so it
+            // doesn't pop into existence when the beak parts.
             withHinge(context, at: beakJoint, angle: beakAngle) {
                 context.setFillColor(CGColor(red: 0.80, green: 0.48, blue: 0.10, alpha: 1))
                 let lowerBeak = CGMutablePath()

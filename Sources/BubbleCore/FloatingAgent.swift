@@ -21,3 +21,13 @@ public enum SpeedMetric: String, Sendable, Equatable, Codable, CaseIterable {
     case diskIOPS = "Disk IOPS"
     case gpuUtilization = "GPU Utilization"
 }
+
+/// What drives how fast bubbles spawn. Historically hard-wired to CPU load.
+public enum BubbleMetric: String, Sendable, Equatable, Codable, CaseIterable {
+    case cpuLoad = "CPU load"
+    case claudeFiveHour = "Claude 5-hour usage"
+    case claudeWeekly = "Claude weekly usage"
+    case gpuUtilization = "GPU utilization"
+    case networkIO = "Network I/O"
+    case diskIOPS = "Disk IOPS"
+}

@@ -60,6 +60,23 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     /// Show rain driven by disk IOPS.
     public var rainEnabled: Bool = true
 
+    // MARK: - Bubbles
+
+    /// Which metric drives the bubble spawn rate.
+    public var bubbleMetric: BubbleMetric = .cpuLoad
+
+    /// Keep the tank deep enough for the agent to float in.
+    ///
+    /// Agents are drawn as partially submerged — the hippo is only a head
+    /// dome, because the water is supposed to hide the rest of it. A water
+    /// level near zero (a freshly reset Claude 5-hour window, where memory
+    /// usage never went) leaves nothing to hide it and the agent appears to
+    /// hover. With this on, the level never drops below what the agent needs
+    /// to sit in; the readout and overlays still report the true figure.
+    /// Turn it off for a strictly literal tank, where the agent instead rests
+    /// on the floor of an empty one.
+    public var keepAgentAfloat: Bool = true
+
     /// React when the cursor moves onto the Dock tile. Off by default: macOS
     /// gives Dock tiles no hover events, so this requires Accessibility
     /// permission to locate the tile — a real trade for a cosmetic reaction.
@@ -94,7 +111,7 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     private enum CodingKeys: String, CodingKey {
         case maxBubbles, gravity, rippleStrength, volatility, viscosity, speedLimit
         case duckEnabled, agentType, agentSizeScale, speedMetric, rainEnabled
-        case hoverReactionEnabled
+        case keepAgentAfloat, hoverReactionEnabled, bubbleMetric
         case powerMode, claudeUsage, tileReadout, theme
     }
 
@@ -112,6 +129,8 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
         agentSizeScale = try c.decodeIfPresent(Double.self, forKey: .agentSizeScale)   ?? d.agentSizeScale
         speedMetric    = try c.decodeIfPresent(SpeedMetric.self, forKey: .speedMetric) ?? d.speedMetric
         rainEnabled    = try c.decodeIfPresent(Bool.self,   forKey: .rainEnabled)    ?? d.rainEnabled
+        keepAgentAfloat = try c.decodeIfPresent(Bool.self, forKey: .keepAgentAfloat) ?? d.keepAgentAfloat
+        bubbleMetric   = try c.decodeIfPresent(BubbleMetric.self, forKey: .bubbleMetric) ?? d.bubbleMetric
         hoverReactionEnabled = try c.decodeIfPresent(Bool.self, forKey: .hoverReactionEnabled) ?? d.hoverReactionEnabled
         powerMode      = try c.decodeIfPresent(PowerMode.self, forKey: .powerMode)   ?? d.powerMode
         claudeUsage    = try c.decodeIfPresent(ClaudeUsageConfig.self, forKey: .claudeUsage) ?? d.claudeUsage
