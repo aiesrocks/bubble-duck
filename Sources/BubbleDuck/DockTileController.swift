@@ -11,6 +11,7 @@ final class DockTileController {
     private let renderer: BubbleRenderer
     private let metrics: SystemMetrics
     private let claudeUsage = ClaudeUsageReader()
+    private let hoverMonitor = DockHoverMonitor()
 
     /// Single reusable image view installed as the dock tile's content view.
     private let imageView = NSImageView()
@@ -55,8 +56,12 @@ final class DockTileController {
     func apply(_ config: SimulationConfig) {
         let previous = simulation.config.claudeUsage
         let previousReadout = simulation.config.tileReadout.source
+        let previousHover = simulation.config.hoverReactionEnabled
         simulation.apply(config)
         resolveEffectivePowerMode()
+        if previousHover != config.hoverReactionEnabled {
+            syncHoverMonitor()
+        }
         // A settings change that alters what/where we read should take effect
         // now rather than at the end of the current refresh interval.
         if previous.usageFilePath != config.claudeUsage.usageFilePath
@@ -77,6 +82,38 @@ final class DockTileController {
     func setOverlay(_ screen: OverlayScreen) {
         simulation.overlay.screen = screen
         simulation.overlay.locked = screen != .none
+    }
+
+    /// Start or stop hover watching to match the config. Hover needs
+    /// Accessibility permission; when it isn't granted the monitor simply
+    /// doesn't run and reports why through `hoverStatus`.
+    private func syncHoverMonitor() {
+        if simulation.config.hoverReactionEnabled {
+            hoverMonitor.onEnter = { [weak self] in
+                self?.pokeAgent()
+            }
+            hoverMonitor.start()
+        } else {
+            hoverMonitor.stop()
+        }
+    }
+
+    /// Whether hover watching is actually running, and why not if it isn't.
+    var hoverStatus: (running: Bool, error: String?) {
+        (hoverMonitor.isRunning, hoverMonitor.lastError)
+    }
+
+    /// Poke the agent: it opens its mouth, wakes up, and splashes. Driven by
+    /// a Dock icon click, the "Poke Agent" menu item, or the cursor entering
+    /// the tile when hover reactions are switched on.
+    func pokeAgent() {
+        guard simulation.duck.enabled else { return }
+        simulation.duck.react()
+        let surface = simulation.duck.y
+        simulation.bubbleSystem.spawnBurst(x: simulation.duck.x, nearSurface: surface, count: 4)
+        if simulation.effectivePowerMode != .lowest && !simulation.reduceMotion {
+            simulation.ripples.append(RippleRing(x: simulation.duck.x, y: surface, maxRadius: 0.13))
+        }
     }
 
     /// Cycle through overlay screens: none → loadAverage → memoryInfo → none.
@@ -124,6 +161,7 @@ final class DockTileController {
         installFrameTimer()
         observeAccessibilityChanges()
         observeLowPowerMode()
+        syncHoverMonitor()
 
         metricsTimer = Timer.scheduledTimer(withTimeInterval: metricsInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -136,6 +174,7 @@ final class DockTileController {
     }
 
     func stop() {
+        hoverMonitor.stop()
         frameTimer?.invalidate()
         frameTimer = nil
         metricsTimer?.invalidate()

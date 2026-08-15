@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Clicking the dock icon cycles overlays.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        dockTileController?.pokeAgent()
         dockTileController?.cycleOverlay()
         return false
     }
@@ -59,6 +60,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    action: #selector(hideOverlay), keyEquivalent: "")
         hideItem.target = self
         menu.addItem(hideItem)
+
+        menu.addItem(.separator())
+
+        // Poke without cycling the overlay — clicking the icon does both,
+        // which hides the reaction behind the overlay you just opened.
+        let pokeItem = NSMenuItem(title: "Poke Agent",
+                                  action: #selector(pokeAgent), keyEquivalent: "")
+        pokeItem.target = self
+        menu.addItem(pokeItem)
 
         menu.addItem(.separator())
 
@@ -119,6 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dockTileController?.setOverlay(.claudeUsage)
     }
 
+    @objc private func pokeAgent() {
+        dockTileController?.pokeAgent()
+    }
+
     @objc private func hideOverlay() {
         dockTileController?.setOverlay(.none)
     }
@@ -150,7 +164,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let settingsView = SettingsView(store: configStore)
+        let settingsView = SettingsView(
+            store: configStore,
+            usageStatus: { [weak dockTileController] in
+                dockTileController?.claudeUsageStatus ?? (nil, nil)
+            },
+            hoverStatus: { [weak dockTileController] in
+                dockTileController?.hoverStatus ?? (false, nil)
+            }
+        )
         let hostingView = NSHostingView(rootView: settingsView)
         hostingView.frame = NSRect(x: 0, y: 0, width: 420, height: 620)
 

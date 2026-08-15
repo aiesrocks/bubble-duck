@@ -210,13 +210,18 @@ public struct ClaudeUsageConfig: Sendable, Equatable, Codable {
 // MARK: - Formatting
 
 public enum ClaudeUsageFormat {
+    /// Text shown when a window has rolled over and the next reset time isn't
+    /// known yet. Reads as an unfilled clock rather than the bare em dash it
+    /// used to be, which rendered as an anonymous bar on the tile.
+    public static let unknownCountdown = "--:--"
+
     /// Compact countdown, kept as short as the tile deserves: `"4:12"` for an
     /// hour or more (clock-style, zero-padded minutes), `"48m"` below the
     /// hour where the `m` removes any doubt about the unit, `"<1m"` in the
-    /// last minute, and `"—"` once the window has rolled over and no fresh
-    /// reset time is known.
+    /// last minute, and `"--:--"` once the window has rolled over and no
+    /// fresh reset time is known.
     public static func countdown(_ seconds: TimeInterval) -> String {
-        guard seconds > 0 else { return "—" }
+        guard seconds > 0 else { return unknownCountdown }
         let total = Int(seconds.rounded(.down))
         let hours = total / 3600
         let minutes = (total % 3600) / 60

@@ -46,11 +46,24 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     /// Which character floats on the water.
     public var agentType: AgentType = .rubberDuck
 
+    /// Size multiplier applied on top of each character's own tuned scale —
+    /// a hippo stays bigger than a rubber duck at any setting. 1.0 is stock.
+    public var agentSizeScale: Double = 1.0
+
+    /// Clamp applied when the multiplier reaches the simulation, so a bad
+    /// persisted value can't produce an agent larger than the tile.
+    public static let agentSizeRange: ClosedRange<Double> = 0.4...2.5
+
     /// Which metric drives the agent's drift speed.
     public var speedMetric: SpeedMetric = .networkIO
 
     /// Show rain driven by disk IOPS.
     public var rainEnabled: Bool = true
+
+    /// React when the cursor moves onto the Dock tile. Off by default: macOS
+    /// gives Dock tiles no hover events, so this requires Accessibility
+    /// permission to locate the tile — a real trade for a cosmetic reaction.
+    public var hoverReactionEnabled: Bool = false
 
     // MARK: - Power
 
@@ -80,7 +93,8 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     // decodes: every key is optional and falls back to the property default.
     private enum CodingKeys: String, CodingKey {
         case maxBubbles, gravity, rippleStrength, volatility, viscosity, speedLimit
-        case duckEnabled, agentType, speedMetric, rainEnabled
+        case duckEnabled, agentType, agentSizeScale, speedMetric, rainEnabled
+        case hoverReactionEnabled
         case powerMode, claudeUsage, tileReadout, theme
     }
 
@@ -95,8 +109,10 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
         speedLimit     = try c.decodeIfPresent(Double.self, forKey: .speedLimit)     ?? d.speedLimit
         duckEnabled    = try c.decodeIfPresent(Bool.self,   forKey: .duckEnabled)    ?? d.duckEnabled
         agentType      = try c.decodeIfPresent(AgentType.self,   forKey: .agentType)   ?? d.agentType
+        agentSizeScale = try c.decodeIfPresent(Double.self, forKey: .agentSizeScale)   ?? d.agentSizeScale
         speedMetric    = try c.decodeIfPresent(SpeedMetric.self, forKey: .speedMetric) ?? d.speedMetric
         rainEnabled    = try c.decodeIfPresent(Bool.self,   forKey: .rainEnabled)    ?? d.rainEnabled
+        hoverReactionEnabled = try c.decodeIfPresent(Bool.self, forKey: .hoverReactionEnabled) ?? d.hoverReactionEnabled
         powerMode      = try c.decodeIfPresent(PowerMode.self, forKey: .powerMode)   ?? d.powerMode
         claudeUsage    = try c.decodeIfPresent(ClaudeUsageConfig.self, forKey: .claudeUsage) ?? d.claudeUsage
         tileReadout    = try c.decodeIfPresent(TileReadoutConfig.self, forKey: .tileReadout) ?? d.tileReadout

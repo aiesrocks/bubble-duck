@@ -36,12 +36,30 @@ public enum TileReadoutPosition: String, Sendable, Equatable, Codable, CaseItera
     case bottom = "Bottom"
 }
 
+/// How the readout's text color is chosen.
+public enum TileReadoutColorMode: String, Sendable, Equatable, Codable, CaseIterable {
+    /// Always the user's picked `color`.
+    case custom = "Custom"
+    /// Derived per frame from whatever the text overlays — a gentle inverse
+    /// of the sky, the water, or the blend of both where the text straddles
+    /// the surface. Keeps the readout legible as the tank fills and the sky
+    /// moves through the day, without re-picking a color.
+    case autoInverse = "Auto (inverse of background)"
+}
+
 /// Content and styling for the tile's always-on text.
 public struct TileReadoutConfig: Sendable, Equatable, Codable {
     public var source: TileReadoutSource = .cpuPercent
 
-    /// Text color.
+    /// Where the text color comes from.
+    public var colorMode: TileReadoutColorMode = .custom
+
+    /// Text color, used when `colorMode` is `.custom`.
     public var color: SimColor = TileReadoutConfig.defaultColor
+
+    /// How far toward the inverse the auto color goes: 0 leaves the
+    /// background color as-is (invisible), 1 is a full flip.
+    public var autoInverseStrength: Double = 1.0
     /// Peak alpha, 0 = invisible, 1 = fully opaque.
     public var opacity: Double = 0.69
     /// Font size as a fraction of the tile size.
@@ -72,7 +90,8 @@ public struct TileReadoutConfig: Sendable, Equatable, Codable {
 
     // Every key optional so configs written by earlier builds still decode.
     private enum CodingKeys: String, CodingKey {
-        case source, color, opacity, fontScale, position, backdrop, outline
+        case source, colorMode, color, autoInverseStrength
+        case opacity, fontScale, position, backdrop, outline
         case dimWhenIdle, hideClaudeWhenLow
     }
 
@@ -80,7 +99,10 @@ public struct TileReadoutConfig: Sendable, Equatable, Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = TileReadoutConfig()
         source      = try c.decodeIfPresent(TileReadoutSource.self, forKey: .source) ?? d.source
+        colorMode   = try c.decodeIfPresent(TileReadoutColorMode.self, forKey: .colorMode) ?? d.colorMode
         color       = try c.decodeIfPresent(SimColor.self, forKey: .color)      ?? d.color
+        autoInverseStrength = try c.decodeIfPresent(Double.self, forKey: .autoInverseStrength)
+            ?? d.autoInverseStrength
         opacity     = try c.decodeIfPresent(Double.self, forKey: .opacity)      ?? d.opacity
         fontScale   = try c.decodeIfPresent(Double.self, forKey: .fontScale)    ?? d.fontScale
         position    = try c.decodeIfPresent(TileReadoutPosition.self, forKey: .position) ?? d.position

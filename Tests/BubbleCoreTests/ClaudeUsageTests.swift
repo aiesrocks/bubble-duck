@@ -57,8 +57,8 @@ final class ClaudeUsageTests: XCTestCase {
         XCTAssertEqual(ClaudeUsageFormat.countdown(59 * 60), "59m")
         XCTAssertEqual(ClaudeUsageFormat.countdown(48 * 60), "48m")
         XCTAssertEqual(ClaudeUsageFormat.countdown(30), "<1m")
-        XCTAssertEqual(ClaudeUsageFormat.countdown(0), "—")
-        XCTAssertEqual(ClaudeUsageFormat.countdown(-10), "—")
+        XCTAssertEqual(ClaudeUsageFormat.countdown(0), ClaudeUsageFormat.unknownCountdown)
+        XCTAssertEqual(ClaudeUsageFormat.countdown(-10), "--:--")
     }
 
     // MARK: - Weekly color bands
@@ -228,13 +228,178 @@ final class ClaudeUsageTests: XCTestCase {
     func testReadoutAfterRolloverShowsCountdownOnly() {
         var s = state { $0.tileReadout.source = .claudeFiveHourUsageAndCountdown }
         s.claudeUsage = snapshot(fiveHour: window(percent: 100, resetsInSeconds: -60))
-        XCTAssertEqual(s.tileReadout(now: now)?.text, "—")
+        XCTAssertEqual(s.tileReadout(now: now)?.text, "--:--")
     }
 
     func testReadoutWeeklyUsage() {
         var s = state { $0.tileReadout.source = .claudeWeeklyUsage }
         s.claudeUsage = snapshot(sevenDay: window(percent: 61, resetsInSeconds: 86_400))
         XCTAssertEqual(s.tileReadout(now: now)?.text, "61%")
+    }
+
+    // MARK: - Mouth animation
+
+    func testMouthOpensAfterItsInterval() {
+        var mouth = MouthState(initialInterval: 1.0)
+        XCTAssertEqual(mouth.openness, 0)
+        for _ in 0..<60 { mouth.step(deltaTime: 1.0 / 60.0, nextInterval: { 5 }) }
+        XCTAssertTrue(mouth.isOpening)
+        // Mid-animation it should actually be open.
+        for _ in 0..<20 { mouth.step(deltaTime: 1.0 / 60.0, nextInterval: { 5 }) }
+        XCTAssertGreaterThan(mouth.openness, 0.5)
+    }
+
+    func testMouthClosesAndQueuesTheNextInterval() {
+        var mouth = MouthState(initialInterval: 0.01)
+        // Step only until the animation completes — running on would tick the
+        // freshly queued interval back down and make the assertion meaningless.
+        var frames = 0
+        repeat {
+            mouth.step(deltaTime: 1.0 / 60.0, nextInterval: { 9 })
+            frames += 1
+        } while mouth.isOpening && frames < 300
+        XCTAssertLessThan(frames, 300, "mouth animation never finished")
+        XCTAssertEqual(mouth.openness, 0)
+        XCTAssertEqual(mouth.timeUntilOpen, 9, accuracy: 1e-9)
+    }
+
+    func testHippoHoldsItsGapeFarLongerThanOtherAgents() {
+        let hippo = AgentType.hippo.mouthProfile
+        let duck = AgentType.rubberDuck.mouthProfile
+
+        // Absolute seconds spent fully open, not just a bigger fraction.
+        let hippoHold = (hippo.holdEnd - hippo.holdStart) * hippo.duration
+        let duckHold = (duck.holdEnd - duck.holdStart) * duck.duration
+        XCTAssertGreaterThan(hippoHold, duckHold * 5)
+        XCTAssertGreaterThan(hippo.duration, duck.duration)
+    }
+
+    func testAgentTypeSelectsItsMouthProfile() {
+        XCTAssertEqual(AgentType.hippo.mouthProfile, .hippo)
+        XCTAssertEqual(AgentType.frog.mouthProfile, .frog)
+        XCTAssertEqual(AgentType.penguin.mouthProfile, .standard)
+    }
+
+    func testApplyPushesTheAgentsMouthProfile() {
+        var config = SimulationConfig.default
+        config.agentType = .hippo
+        var s = SimulationState(canvasSize: 256, config: config)
+        XCTAssertEqual(s.duck.mouth.profile, .hippo)
+
+        config.agentType = .rubberDuck
+        s.apply(config)
+        XCTAssertEqual(s.duck.mouth.profile, .standard)
+    }
+
+    func testHippoStaysWideOpenAcrossItsHold() {
+        var mouth = MouthState(initialInterval: 0.01, profile: .hippo)
+        var secondsFullyOpen = 0.0
+        let dt = 1.0 / 60.0
+        for _ in 0..<400 {
+            mouth.step(deltaTime: dt, nextInterval: { 99 })
+            if mouth.openness > 0.99 { secondsFullyOpen += dt }
+        }
+        // ~0.68 of 3.6s held wide.
+        XCTAssertGreaterThan(secondsFullyOpen, 2.0)
+    }
+
+    func testMouthEnvelopeOpensHoldsAndCloses() {
+        XCTAssertEqual(MouthState.envelope(0), 0, accuracy: 1e-9)
+        XCTAssertEqual(MouthState.envelope(0.30), 1, accuracy: 1e-9)
+        XCTAssertEqual(MouthState.envelope(0.50), 1, accuracy: 1e-9)   // hold
+        XCTAssertEqual(MouthState.envelope(0.65), 1, accuracy: 1e-9)
+        XCTAssertEqual(MouthState.envelope(1.0), 0, accuracy: 1e-9)
+        XCTAssertLessThan(MouthState.envelope(0.85), 1)
+    }
+
+    func testTriggerOpensImmediatelyAndIsIgnoredMidAnimation() {
+        var mouth = MouthState(initialInterval: 100)
+        mouth.trigger()
+        mouth.step(deltaTime: 1.0 / 60.0, nextInterval: { 5 })
+        XCTAssertTrue(mouth.isOpening)
+
+        let progressed = mouth
+        mouth.trigger()   // no restart mid-yawn
+        XCTAssertEqual(mouth, progressed)
+    }
+
+    func testPokeWakesTheAgentAndOpensItsMouth() {
+        var duck = DuckState()
+        duck.sleepiness = 1.0
+        duck.react()
+        XCTAssertEqual(duck.sleepiness, 0)
+        XCTAssertTrue(duck.mouth.isOpening)
+    }
+
+    func testSimulationStepDrivesTheMouth() {
+        var s = state { _ in }
+        s.duck.react()
+        let before = s.duck.mouth.openness
+        for _ in 0..<15 { s.step(now: now) }
+        XCTAssertGreaterThan(s.duck.mouth.openness, before)
+    }
+
+    // MARK: - Auto text color
+
+    func testGentleInverseFlipsLightnessNotHue() {
+        // Cyan sky → a dark, desaturated cyan: still legible, still in family.
+        let sky = SimColor(hex: 0x00FFFF)
+        let inverted = sky.gentleInverse()
+        XCTAssertLessThan(inverted.luminance, 0.35)
+        XCTAssertGreaterThan(inverted.b, inverted.r)   // hue side preserved
+        XCTAssertGreaterThan(inverted.g, inverted.r)
+
+        // Deep blue water → a pale blue-white.
+        let water = SimColor(hex: 0x0000FF)
+        let lifted = water.gentleInverse()
+        XCTAssertGreaterThan(lifted.luminance, 0.6)
+        XCTAssertGreaterThan(lifted.b, lifted.r)
+    }
+
+    func testGentleInverseNeverGoesFullyBlackOrWhite() {
+        for hex: UInt32 in [0x000000, 0xFFFFFF, 0xE04030, 0x20B0AC] {
+            let out = SimColor(hex: hex).gentleInverse()
+            XCTAssertGreaterThan(out.luminance, 0.02)
+            XCTAssertLessThan(out.luminance, 0.98)
+        }
+    }
+
+    func testGentleInverseStrengthZeroIsIdentity() {
+        let color = SimColor(hex: 0x20B0AC)
+        let out = color.gentleInverse(strength: 0)
+        XCTAssertEqual(out.r, color.r, accuracy: 1e-9)
+        XCTAssertEqual(out.g, color.g, accuracy: 1e-9)
+        XCTAssertEqual(out.b, color.b, accuracy: 1e-9)
+    }
+
+    func testReadoutBackgroundPicksSkyWaterOrBlend() {
+        var s = state { _ in }
+        let sky = SimColor(hex: 0x00FFFF)
+        let water = SimColor(hex: 0x0000FF)
+
+        // Empty tank: text anywhere above the floor sits on sky.
+        s.water.targetLevel = 0
+        for _ in 0..<200 { s.water.step() }
+        XCTAssertEqual(s.tileReadoutBackground(centerY: 0.5, height: 0.1,
+                                               skyColor: sky, liquidColor: water), sky)
+
+        // Full tank: the same text sits on water.
+        s.water.targetLevel = 1
+        for _ in 0..<200 { s.water.step() }
+        XCTAssertEqual(s.tileReadoutBackground(centerY: 0.5, height: 0.1,
+                                               skyColor: sky, liquidColor: water), water)
+    }
+
+    func testReadoutBackgroundBlendsAcrossTheSurface() {
+        var s = state { _ in }
+        s.water.targetLevel = 0.5
+        for _ in 0..<400 { s.water.step() }
+        let blended = s.tileReadoutBackground(
+            centerY: 0.5, height: 0.2,
+            skyColor: SimColor(hex: 0x000000), liquidColor: SimColor(hex: 0xFFFFFF)
+        )
+        // Surface through the middle of the band → roughly half and half.
+        XCTAssertEqual(blended.r, 0.5, accuracy: 0.15)
     }
 
     // MARK: - Theme coverage
@@ -342,13 +507,44 @@ final class ClaudeUsageTests: XCTestCase {
         var duck = DuckState()
         let empty = Array(repeating: 0.0, count: 64)
         for _ in 0..<600 { duck.step(waterLevels: empty) }
-        XCTAssertGreaterThanOrEqual(duck.y, DuckState.minimumY)
+        XCTAssertGreaterThanOrEqual(duck.y, duck.minimumY)
     }
 
     func testFollowWaterAlsoRespectsTheFloor() {
         var duck = DuckState()
         duck.followWater(waterLevels: Array(repeating: 0.0, count: 64))
-        XCTAssertEqual(duck.y, DuckState.minimumY)
+        XCTAssertEqual(duck.y, DuckState.baseMinimumY)
+    }
+
+    // MARK: - Agent size
+
+    func testFloorGrowsWithAgentSize() {
+        var duck = DuckState()
+        duck.sizeScale = 2.0
+        duck.followWater(waterLevels: Array(repeating: 0.0, count: 64))
+        XCTAssertEqual(duck.y, DuckState.baseMinimumY * 2.0, accuracy: 1e-9)
+    }
+
+    func testApplyPushesAndClampsAgentSize() {
+        var config = SimulationConfig.default
+        config.agentSizeScale = 1.6
+        var s = SimulationState(canvasSize: 256, config: config)
+        XCTAssertEqual(s.duck.sizeScale, 1.6, accuracy: 1e-9)
+
+        config.agentSizeScale = 99
+        s.apply(config)
+        XCTAssertEqual(s.duck.sizeScale, SimulationConfig.agentSizeRange.upperBound)
+
+        config.agentSizeScale = 0
+        s.apply(config)
+        XCTAssertEqual(s.duck.sizeScale, SimulationConfig.agentSizeRange.lowerBound)
+    }
+
+    func testAgentSizeDefaultsToStockAndSurvivesOldConfigs() throws {
+        XCTAssertEqual(SimulationConfig.default.agentSizeScale, 1.0)
+        let json = Data(#"{"maxBubbles": 42}"#.utf8)
+        let config = try JSONDecoder().decode(SimulationConfig.self, from: json)
+        XCTAssertEqual(config.agentSizeScale, 1.0)
     }
 
     func testAgentStillTracksNormalWaterLevels() {

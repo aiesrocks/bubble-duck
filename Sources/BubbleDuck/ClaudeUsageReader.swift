@@ -2,7 +2,12 @@
 // BubbleDuck — reads Claude Code usage handed over by the status-line wrapper
 
 import Foundation
+import os
 import BubbleCore
+
+/// Diagnostics for "why is the tile showing that?". Read with:
+/// `log show --predicate 'subsystem == "com.bubbleduck.app"' --last 10m`
+private let usageLog = Logger(subsystem: "com.bubbleduck.app", category: "usage")
 
 /// Polls the small JSON file that `scripts/bubbleduck-statusline.sh` writes
 /// from Claude Code's status-line payload.
@@ -23,6 +28,9 @@ final class ClaudeUsageReader {
     /// When `refresh` last actually hit the disk.
     private(set) var lastReadAt: Date?
 
+    /// How often to look for a new window while the held one has rolled over.
+    static let rolloverPollSeconds: TimeInterval = 5
+
     private var expandedPath: String = ""
     private var lastModified: Date?
 
@@ -31,7 +39,16 @@ final class ClaudeUsageReader {
     /// caller uses a non-nil return to record a history sample.
     @discardableResult
     func refresh(path: String, interval: TimeInterval, now: Date = Date()) -> ClaudeUsageSnapshot? {
-        if let last = lastReadAt, now.timeIntervalSince(last) < interval { return nil }
+        // While the window we're holding has already rolled over, the tile is
+        // showing "--:--" and 0% — check far more often so the new window
+        // lands as soon as Claude Code writes it. This isn't extra parsing:
+        // the mtime guard below still skips an unchanged file, so it's one
+        // `stat` every few seconds until the gap closes.
+        let rolledOver = snapshot?.fiveHour?.hasRolledOver(now: now) ?? false
+        let effectiveInterval = rolledOver
+            ? min(interval, ClaudeUsageReader.rolloverPollSeconds)
+            : interval
+        if let last = lastReadAt, now.timeIntervalSince(last) < effectiveInterval { return nil }
         lastReadAt = now
 
         let expanded = (path as NSString).expandingTildeInPath
@@ -68,6 +85,20 @@ final class ClaudeUsageReader {
             }
             lastError = nil
             snapshot = decoded
+            // One line per actual parse (at most once a minute) so a wrong
+            // tile can be diagnosed from `log show --predicate
+            // 'process == "BubbleDuck"'` without guessing.
+            if let five = decoded.fiveHour {
+                // Explicitly public — the unified log redacts interpolated
+                // values by default, which makes the line useless here.
+                let summary = String(
+                    format: "5h %.0f%% resets in %.0f min%@, written %.0fs ago",
+                    five.usedPercentage, five.timeUntilReset(now: now) / 60,
+                    five.hasRolledOver(now: now) ? " (ROLLED OVER)" : "",
+                    decoded.age(now: now)
+                )
+                usageLog.info("usage read — \(summary, privacy: .public)")
+            }
             return decoded
         } catch {
             lastError = "Unreadable usage file: \(error.localizedDescription)"

@@ -21,6 +21,49 @@ public struct SimColor: Sendable, Equatable, Codable {
         self.a = 1.0
     }
 
+    /// Perceptual luminance, 0 (black) … 1 (white). Rec. 709 weights.
+    public var luminance: Double {
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    /// A *gentle* inverse of this color: the hue is kept, the lightness is
+    /// flipped to the far end, and saturation is capped so the result reads as
+    /// a tinted near-black or near-white rather than a clashing complement.
+    ///
+    /// Used for the tile readout's auto color, where the text has to stay
+    /// legible over whatever it happens to overlay — cyan sky at noon, red
+    /// water at 95% weekly usage — without the user re-picking a color.
+    ///
+    /// `strength` 0 leaves the color untouched, 1 is the full flip.
+    public func gentleInverse(strength: Double = 1.0) -> SimColor {
+        let t = max(0, min(1, strength))
+        let maxC = max(r, max(g, b))
+        let minC = min(r, min(g, b))
+        let chroma = maxC - minC
+
+        // Target lightness on the opposite side of the midpoint. Not 0 or 1:
+        // a little headroom keeps it from looking like a hard stencil.
+        let targetValue: Double = luminance > 0.5 ? 0.16 : 0.94
+        let value = maxC + (targetValue - maxC) * t
+
+        // Keep a hint of the background's hue, but well below its saturation
+        // so the text never competes with the scene it sits on.
+        let saturation = maxC > 0 ? chroma / maxC : 0
+        let targetSaturation = min(saturation, 0.35)
+        let s = saturation + (targetSaturation - saturation) * t
+
+        // Rebuild from the original hue at the new value/saturation.
+        guard chroma > 0 else { return SimColor(r: value, g: value, b: value, a: a) }
+        let scale = value * s
+        let base = value - scale
+        return SimColor(
+            r: base + scale * ((r - minC) / chroma),
+            g: base + scale * ((g - minC) / chroma),
+            b: base + scale * ((b - minC) / chroma),
+            a: a
+        )
+    }
+
     /// Linearly interpolate between two colors.
     public func lerp(to other: SimColor, t: Double) -> SimColor {
         let t = max(0, min(1, t))

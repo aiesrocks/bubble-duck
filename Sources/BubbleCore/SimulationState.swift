@@ -100,6 +100,12 @@ public struct SimulationState: Sendable {
         bubbleSystem.gravity = config.gravity
         bubbleSystem.rippleStrength = config.rippleStrength
         duck.enabled = config.duckEnabled
+        // Mouth cadence is per species — a hippo holds its gape far longer
+        // than a duck's bill snaps.
+        duck.mouth.profile = config.agentType.mouthProfile
+        duck.sizeScale = min(SimulationConfig.agentSizeRange.upperBound,
+                             max(SimulationConfig.agentSizeRange.lowerBound,
+                                 config.agentSizeScale))
     }
 
     // MARK: - Claude usage resolution
@@ -209,6 +215,36 @@ public struct SimulationState: Sendable {
             guard let window = claudeUsage?.sevenDay, !belowFirstBand(window) else { return nil }
             return TileReadout(text: usage(window), isStale: stale)
         }
+    }
+
+    /// Mean water surface height, 0...1. Used to work out what the tile
+    /// readout is sitting on; per-column ripples average out.
+    public var averageWaterLevel: Double {
+        guard !water.levels.isEmpty else { return 0 }
+        return water.levels.reduce(0, +) / Double(water.levels.count)
+    }
+
+    /// The color behind the tile readout: sky, water, or the blend where the
+    /// text straddles the surface. The caller passes the *final* colors it is
+    /// about to paint with (post battery tint), so the answer matches the
+    /// pixels rather than a recomputation that might drift from them.
+    ///
+    /// `centerY` and `height` are the text's vertical band in 0...1 tile
+    /// coordinates.
+    public func tileReadoutBackground(centerY: Double, height: Double,
+                                      skyColor: SimColor,
+                                      liquidColor: SimColor) -> SimColor {
+        let surface = averageWaterLevel
+        let bottom = centerY - height / 2
+
+        // Fraction of the text's band that lies below the water surface.
+        let submerged: Double
+        if height <= 0 {
+            submerged = centerY <= surface ? 1 : 0
+        } else {
+            submerged = max(0, min(1, (surface - bottom) / height))
+        }
+        return skyColor.lerp(to: liquidColor, t: submerged)
     }
 
     /// Advance the simulation by one frame.
@@ -358,6 +394,10 @@ public struct DuckState: Sendable {
     /// interval so blinks don't sync when the agent type is swapped.
     public var blink: BlinkState = BlinkState(initialInterval: Double.random(in: 1.0...3.5))
 
+    /// Mouth/beak animation state, on its own slower cadence than blinking.
+    /// Randomized start so a swapped agent doesn't yawn immediately.
+    public var mouth: MouthState = MouthState(initialInterval: Double.random(in: 4.0...11.0))
+
     /// Idle-sleep progress (aiesrocks/bubble-duck#5). Climbs while CPU is
     /// below `idleCPUThreshold`, drops fast when CPU spikes again. Fully
     /// asleep (1.0) forces eyes shut via `effectiveEyelidOpenness` and
@@ -366,14 +406,23 @@ public struct DuckState: Sendable {
 
     // MARK: - Sleep tuning (constants, not user-facing config yet)
 
-    /// Lowest surface position the agent will follow. The water level can now
-    /// legitimately reach 0 — a freshly reset Claude 5-hour window is 0% used,
-    /// where memory usage never was — and an agent tracking a level of 0 gets
-    /// drawn centered on the tile's bottom edge, i.e. half off-canvas. This
-    /// floor lets it rest *on* the floor of an empty tank instead of sinking
-    /// through it. Sized from the largest agent silhouette (~0.12 of the
-    /// canvas below its origin).
-    public static let minimumY: Double = 0.12
+    /// Size multiplier from config, applied on top of each character's own
+    /// tuned scale by the renderer. Kept here (rather than read from config
+    /// at draw time) so the floor below can grow with the agent.
+    public var sizeScale: Double = 1.0
+
+    /// Lowest surface position a stock-sized agent will follow. The water
+    /// level can now legitimately reach 0 — a freshly reset Claude 5-hour
+    /// window is 0% used, where memory usage never was — and an agent
+    /// tracking a level of 0 gets drawn centered on the tile's bottom edge,
+    /// i.e. half off-canvas. This floor lets it rest *on* the floor of an
+    /// empty tank instead of sinking through it. Sized from the largest agent
+    /// silhouette (~0.12 of the canvas below its origin).
+    public static let baseMinimumY: Double = 0.12
+
+    /// `baseMinimumY` grown for the current size multiplier — a bigger agent
+    /// needs to sit higher to keep its feet on the tile.
+    public var minimumY: Double { DuckState.baseMinimumY * sizeScale }
 
     /// CPU load below which the system is "idle". Per aiesrocks/bubble-duck#5
     /// (user feedback on the issue bumped this from 5% to 10%).
@@ -390,6 +439,14 @@ public struct DuckState: Sendable {
     private let maxExtraSpeed: Double = 0.004
 
     public init() {}
+
+    /// React to being poked: open the mouth and snap awake. Used when the
+    /// user clicks the Dock icon — the one interaction macOS actually hands
+    /// us for a Dock tile.
+    public mutating func react() {
+        mouth.trigger()
+        sleepiness = 0
+    }
 
     /// Effective eyelid openness combining blink animation and sleepiness.
     /// 1.0 = fully open, 0.0 = fully closed. The renderer uses this
@@ -455,7 +512,7 @@ public struct DuckState: Sendable {
         // from bubble-pop spikes. At high CPU the clamp is effectively gone.
         let maxStep = 0.0005 + cpu2 * 0.05  // ~0.13px idle … 13px full (on 256px canvas)
         delta = max(-maxStep, min(maxStep, delta))
-        y = max(DuckState.minimumY, y + delta)
+        y = max(minimumY, y + delta)
 
         // Bob amplitude scales with CPU load directly (not bubble count,
         // which saturates too early). Quadratic curve keeps low CPU calm
@@ -482,8 +539,9 @@ public struct DuckState: Sendable {
         // Flip upside down if water is very high (>95%)
         isUpsideDown = y > 0.95
 
-        // Advance eyelid animation at the fixed simulation step rate.
+        // Advance eyelid and mouth animations at the fixed simulation rate.
         blink.step(deltaTime: 1.0 / 60.0)
+        mouth.step(deltaTime: 1.0 / 60.0)
 
         return splashColumn
     }
@@ -498,7 +556,7 @@ public struct DuckState: Sendable {
     public mutating func followWater(waterLevels: [Double]) {
         guard enabled, !waterLevels.isEmpty else { return }
         let col = min(Int(x * Double(waterLevels.count)), waterLevels.count - 1)
-        y = max(DuckState.minimumY, waterLevels[col])
+        y = max(minimumY, waterLevels[col])
         isUpsideDown = y > 0.95
     }
 }

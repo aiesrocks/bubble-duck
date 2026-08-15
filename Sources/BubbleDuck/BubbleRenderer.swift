@@ -125,7 +125,8 @@ struct BubbleRenderer {
 
         // The tile's one always-on readout — wmbubble's CPU digits by default,
         // or a Claude figure in the same slot.
-        drawTileReadout(context: context, state: state, now: now, size: s)
+        drawTileReadout(context: context, state: state, now: now, size: s,
+                        skyColor: skyColor, liquidColor: liquidColor)
 
         // Overlay screens (load average, memory info, Claude usage)
         if state.overlay.overlayAlpha > 0.01 {
@@ -148,7 +149,8 @@ struct BubbleRenderer {
     /// a while. Only *percentages* go stale: those are marked `~` and the
     /// whole readout dims.
     private func drawTileReadout(context: CGContext, state: SimulationState,
-                                 now: Date, size: Double) {
+                                 now: Date, size: Double,
+                                 skyColor: SimColor, liquidColor: SimColor) {
         let cfg = state.config.tileReadout
         guard let readout = state.tileReadout(now: now) else { return }
 
@@ -158,39 +160,21 @@ struct BubbleRenderer {
         let opacity = max(0, min(1, cfg.opacity)) * dim * (readout.isStale ? 0.55 : 1.0)
         guard opacity > 0.01 else { return }
 
-        let color = NSColor(srgbRed: cfg.color.r, green: cfg.color.g,
-                            blue: cfg.color.b, alpha: 1.0)
-        // Outline in whichever of black/white contrasts with the text color,
-        // so the readout survives being drawn over pale sky or bright water —
-        // teal digits on a cyan sky are otherwise nearly invisible.
-        let luminance = 0.2126 * cfg.color.r + 0.7152 * cfg.color.g + 0.0722 * cfg.color.b
-        let outlineColor: NSColor = luminance > 0.55 ? .black : .white
-
-        func attributes(fontSize: Double) -> [NSAttributedString.Key: Any] {
-            var attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold),
-                .foregroundColor: color
-            ]
-            if cfg.outline {
-                // Negative width = stroke *and* fill, as a percentage of the
-                // font size, so the outline scales with the text.
-                attrs[.strokeWidth] = -5.0
-                attrs[.strokeColor] = outlineColor
-            }
-            return attrs
+        func font(_ fontSize: Double) -> NSFont {
+            NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
         }
 
-        // Shrink to fit rather than letting a long string ("42% 4:12") run
-        // off the tile at large sizes — the size slider then behaves as
-        // "as big as this will go".
+        // Measure and fit first — color depends on where the text lands, and
+        // where it lands depends on how big it ends up. Shrink to fit rather
+        // than letting a long string ("42% 4:12") run off the tile at large
+        // sizes, so the size slider behaves as "as big as this will go".
         let maxWidth = size * 0.92
         var fontSize = size * max(0.04, min(0.40, cfg.fontScale))
-        var attrStr = NSAttributedString(string: readout.text, attributes: attributes(fontSize: fontSize))
-        if attrStr.size().width > maxWidth {
-            fontSize *= maxWidth / attrStr.size().width
-            attrStr = NSAttributedString(string: readout.text, attributes: attributes(fontSize: fontSize))
+        var textSize = (readout.text as NSString).size(withAttributes: [.font: font(fontSize)])
+        if textSize.width > maxWidth {
+            fontSize *= maxWidth / textSize.width
+            textSize = (readout.text as NSString).size(withAttributes: [.font: font(fontSize)])
         }
-        let textSize = attrStr.size()
         let x = (size - textSize.width) / 2
 
         // CG origin is bottom-left; `bottom` is wmbubble's gauge position.
@@ -200,6 +184,42 @@ struct BubbleRenderer {
         case .center: y = (size - textSize.height) / 2
         case .bottom: y = size * 0.03
         }
+
+        // Resolve the text color. In auto mode it's a gentle inverse of
+        // whatever the text actually overlays — sky, water, or the blend
+        // where it straddles the surface — recomputed every frame so it
+        // tracks the tank filling and the sky moving through the day.
+        let textColor: SimColor
+        switch cfg.colorMode {
+        case .custom:
+            textColor = cfg.color
+        case .autoInverse:
+            let background = state.tileReadoutBackground(
+                centerY: (y + textSize.height / 2) / size,
+                height: textSize.height / size,
+                skyColor: skyColor,
+                liquidColor: liquidColor
+            )
+            textColor = background.gentleInverse(strength: cfg.autoInverseStrength)
+        }
+        let color = NSColor(srgbRed: textColor.r, green: textColor.g,
+                            blue: textColor.b, alpha: 1.0)
+        // Outline in whichever of black/white contrasts with the text color,
+        // so the readout survives being drawn over pale sky or bright water —
+        // teal digits on a cyan sky are otherwise nearly invisible.
+        let outlineColor: NSColor = textColor.luminance > 0.55 ? .black : .white
+
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: font(fontSize),
+            .foregroundColor: color
+        ]
+        if cfg.outline {
+            // Negative width = stroke *and* fill, as a percentage of the font
+            // size, so the outline scales with the text.
+            attrs[.strokeWidth] = -5.0
+            attrs[.strokeColor] = outlineColor
+        }
+        let attrStr = NSAttributedString(string: readout.text, attributes: attrs)
 
         context.saveGState()
         context.setAlpha(opacity)
@@ -510,7 +530,10 @@ struct BubbleRenderer {
     /// Positions the agent on the water surface and returns the scale factor.
     private func beginAgent(context: CGContext, duck: DuckState, size: Double,
                             agentScale: Double = 0.22) -> Double {
-        let agentSize = size * agentScale
+        // `agentScale` is the character's own tuned size; `duck.sizeScale` is
+        // the user's multiplier on top, so relative proportions between
+        // characters hold at any setting.
+        let agentSize = size * agentScale * duck.sizeScale
         let dx = duck.x * size
         let dy = duck.y * size
         let bob = sin(duck.bobAngle) * duck.bobAmplitude
@@ -524,6 +547,44 @@ struct BubbleRenderer {
         }
         context.scaleBy(x: agentSize, y: agentSize)
         return agentSize
+    }
+
+    // MARK: Mouth rendering helpers
+
+    /// Draws `body` with the context rotated about `hinge`, so a jaw swings
+    /// open around the joint instead of sliding away from its other half.
+    /// A negative `angle` swings the far end (higher x) downward.
+    ///
+    /// Note for the rubber duck: its space is stretched 1.33× horizontally,
+    /// so the rotation shears slightly with it. That reads as a bill opening
+    /// on a fat duck, which is exactly what it is.
+    private func withHinge(_ context: CGContext, at hinge: CGPoint,
+                           angle: Double, _ body: () -> Void) {
+        context.saveGState()
+        context.translateBy(x: hinge.x, y: hinge.y)
+        context.rotate(by: angle)
+        context.translateBy(x: -hinge.x, y: -hinge.y)
+        body()
+        context.restoreGState()
+    }
+
+    /// The wedge of open mouth between a fixed upper edge and the same edge
+    /// swung about `hinge`. Filling this is what makes the gape a wedge that
+    /// narrows to nothing at the joint, rather than a uniform dark band.
+    private func gapeWedge(hinge: CGPoint, edge: CGPoint,
+                           from upperAngle: Double = 0, to lowerAngle: Double) -> CGPath {
+        func swing(_ angle: Double) -> CGPoint {
+            let dx = edge.x - hinge.x
+            let dy = edge.y - hinge.y
+            return CGPoint(x: hinge.x + dx * cos(angle) - dy * sin(angle),
+                           y: hinge.y + dx * sin(angle) + dy * cos(angle))
+        }
+        let path = CGMutablePath()
+        path.move(to: hinge)
+        path.addLine(to: swing(upperAngle))
+        path.addLine(to: swing(lowerAngle))
+        path.closeSubpath()
+        return path
     }
 
     // MARK: Blink rendering helpers
@@ -565,16 +626,18 @@ struct BubbleRenderer {
         let bob = sin(duck.bobAngle) * duck.bobAmplitude
         // Position the Z just above the agent's head, matching the sign
         // convention the body path uses (positive local y = "away from water").
-        let zY = dy + bob + size * 0.18
+        // Head clearance and glyph size both track the agent's size so the Z
+        // keeps sitting just above the head at any scale.
+        let zY = dy + bob + size * 0.18 * duck.sizeScale
 
-        let font = NSFont.systemFont(ofSize: size * 0.09, weight: .bold)
+        let font = NSFont.systemFont(ofSize: size * 0.09 * duck.sizeScale, weight: .bold)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor(white: 0.15, alpha: alpha)
         ]
         let str = NSAttributedString(string: "Z", attributes: attrs)
         // `dx` is the agent's horizontal center; nudge left so the Z reads as centered.
-        str.draw(at: NSPoint(x: dx - size * 0.04, y: zY))
+        str.draw(at: NSPoint(x: dx - size * 0.04 * duck.sizeScale, y: zY))
     }
 
     private func drawRubberDuck(context: CGContext, duck: DuckState, theme: ColorTheme, size: Double) {
@@ -616,12 +679,29 @@ struct BubbleRenderer {
         context.setFillColor(cgColor(theme.duckBody))
         context.fillEllipse(in: CGRect(x: 0.18, y: 0.12, width: 0.48, height: 0.48))
 
-        // Bill
+        // Bill — the lower mandible swings about the joint where the bill
+        // meets the head, so the tip opens wide and the back stays shut.
+        let quack = duck.mouth.openness
+        let billAngle = -0.42 * quack
+        let billJoint = CGPoint(x: 0.56, y: 0.29)
+        let billShadow = blend(theme.duckBill, with: SimColor(r: 0, g: 0, b: 0), t: 0.25)
+
+        if quack > 0.01 {
+            context.setFillColor(CGColor(red: 0.45, green: 0.16, blue: 0.18, alpha: 1))
+            context.addPath(gapeWedge(hinge: billJoint,
+                                      edge: CGPoint(x: 0.93, y: 0.27), to: billAngle))
+            context.fillPath()
+        }
+
+        // Lower bill
+        withHinge(context, at: billJoint, angle: billAngle) {
+            context.setFillColor(cgColor(billShadow))
+            context.fillEllipse(in: CGRect(x: 0.58, y: 0.22, width: 0.32, height: 0.06))
+        }
+
+        // Upper bill
         context.setFillColor(cgColor(theme.duckBill))
         context.fillEllipse(in: CGRect(x: 0.55, y: 0.26, width: 0.38, height: 0.16))
-        let billShadow = blend(theme.duckBill, with: SimColor(r: 0, g: 0, b: 0), t: 0.25)
-        context.setFillColor(cgColor(billShadow))
-        context.fillEllipse(in: CGRect(x: 0.58, y: 0.22, width: 0.32, height: 0.06))
 
         // Eye
         let o = duck.effectiveEyelidOpenness
@@ -681,7 +761,21 @@ struct BubbleRenderer {
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
         context.fillEllipse(in: CGRect(x: 0.35, y: 0.3, width: 0.18, height: 0.06))
 
-        // Red bill
+        // Red bill — lower mandible swings about the joint at the head
+        let mandarinOpen = duck.mouth.openness
+        let mandarinAngle = -0.40 * mandarinOpen
+        let mandarinJoint = CGPoint(x: 0.53, y: 0.25)
+        if mandarinOpen > 0.01 {
+            context.setFillColor(CGColor(red: 0.42, green: 0.10, blue: 0.10, alpha: 1))
+            context.addPath(gapeWedge(hinge: mandarinJoint,
+                                      edge: CGPoint(x: 0.82, y: 0.24), to: mandarinAngle))
+            context.fillPath()
+
+            withHinge(context, at: mandarinJoint, angle: mandarinAngle) {
+                context.setFillColor(CGColor(red: 0.72, green: 0.12, blue: 0.08, alpha: 1))
+                context.fillEllipse(in: CGRect(x: 0.54, y: 0.19, width: 0.26, height: 0.05))
+            }
+        }
         context.setFillColor(CGColor(red: 0.9, green: 0.15, blue: 0.1, alpha: 1))
         context.fillEllipse(in: CGRect(x: 0.52, y: 0.2, width: 0.3, height: 0.12))
 
@@ -826,7 +920,31 @@ struct BubbleRenderer {
         fillEyeGlint(context, x: 0.18, y: 0.33, width: 0.03, height: 0.03, openness: oFrog)
         fillEyeGlint(context, x: 0.38, y: 0.33, width: 0.03, height: 0.03, openness: oFrog)
 
-        // Wide smile
+        // Wide smile — becomes an even wider open mouth on the mouth cycle.
+        // A frog's whole face is mouth, so this one opens the most.
+        // The jaw joint sits at the back corner of the mouth (low x); the
+        // whole lower lip swings about it, so the snout end drops open.
+        let croak = duck.mouth.openness
+        let croakJoint = CGPoint(x: 0.08, y: 0.12)
+        let croakAngle = -0.50 * croak
+        if croak > 0.01 {
+            context.setFillColor(CGColor(red: 0.55, green: 0.20, blue: 0.24, alpha: 1))
+            context.addPath(gapeWedge(hinge: croakJoint,
+                                      edge: CGPoint(x: 0.42, y: 0.12), to: croakAngle))
+            context.fillPath()
+
+            // Lower lip, swung about the joint
+            withHinge(context, at: croakJoint, angle: croakAngle) {
+                context.setStrokeColor(CGColor(red: 0.2, green: 0.5, blue: 0.0, alpha: 1))
+                context.setLineWidth(0.03)
+                context.move(to: CGPoint(x: 0.42, y: 0.12))
+                context.addCurve(to: CGPoint(x: 0.08, y: 0.12),
+                                 control1: CGPoint(x: 0.35, y: 0.06),
+                                 control2: CGPoint(x: 0.15, y: 0.06))
+                context.strokePath()
+            }
+        }
+
         context.setStrokeColor(CGColor(red: 0.2, green: 0.5, blue: 0.0, alpha: 1))
         context.setLineWidth(0.025)
         context.move(to: CGPoint(x: 0.42, y: 0.12))
@@ -857,13 +975,96 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: -0.45, y: -0.12, width: 0.9, height: 0.3))
 
         // Big snout bump (front) — the most prominent feature
-        context.setFillColor(CGColor(red: 0.52, green: 0.47, blue: 0.49, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.15, y: -0.08, width: 0.4, height: 0.26))
+        let snoutGray = CGColor(red: 0.52, green: 0.47, blue: 0.49, alpha: 1)
 
-        // Nostrils — bigger
-        context.setFillColor(CGColor(red: 0.25, green: 0.2, blue: 0.22, alpha: 1))
-        context.fillEllipse(in: CGRect(x: 0.33, y: 0.08, width: 0.08, height: 0.05))
-        context.fillEllipse(in: CGRect(x: 0.42, y: 0.08, width: 0.08, height: 0.05))
+        // A hippo opens both halves: the lower jaw drops and the muzzle lifts,
+        // in roughly a 3:2 ratio. Moving only one half reads as a face with a
+        // paddle swinging off it rather than as a mouth.
+        let gape = duck.mouth.openness
+        let jaw = CGPoint(x: 0.12, y: 0.03)     // jaw joint, tucked at the head
+        let lowerAngle = -0.48 * gape           // ~27 degrees down
+        let upperAngle = 0.34 * gape            // ~19 degrees up
+
+        if gape > 0.01 {
+            // Inside of the mouth, in two depths: the mouth proper between the
+            // two swung jaw lines, and a darker throat nearer the joint. Two
+            // flat tones give the cavity depth without adding small details
+            // that turn to mush at Dock size.
+            // The wedge must stop short of both jaw tips (muzzle ends at 0.55,
+            // chin at 0.56). Running it past them leaves a big dark triangle
+            // hanging off the face with no jaw above or below it.
+            context.setFillColor(CGColor(red: 0.38, green: 0.15, blue: 0.19, alpha: 1))
+            context.addPath(gapeWedge(hinge: jaw, edge: CGPoint(x: 0.47, y: 0.03),
+                                      from: upperAngle, to: lowerAngle))
+            context.fillPath()
+
+            context.setFillColor(CGColor(red: 0.22, green: 0.07, blue: 0.11, alpha: 1))
+            context.addPath(gapeWedge(hinge: jaw, edge: CGPoint(x: 0.26, y: 0.03),
+                                      from: upperAngle, to: lowerAngle))
+            context.fillPath()
+
+            withHinge(context, at: jaw, angle: lowerAngle) {
+                // Far-side tusk first, so the jaw drawn over it hides its
+                // base. A hippo has a lower canine on each side; in this side
+                // view the far one should read as a tip poking up from behind
+                // the jaw, which also gives the cavity some depth.
+                if gape > 0.40 {
+                    let reveal = min(1.0, (gape - 0.40) / 0.35)
+                    context.setFillColor(CGColor(red: 0.80, green: 0.77, blue: 0.71, alpha: 1))
+                    let farTusk = CGMutablePath()
+                    farTusk.move(to: CGPoint(x: 0.34, y: -0.01))
+                    farTusk.addLine(to: CGPoint(x: 0.385, y: -0.012))
+                    farTusk.addLine(to: CGPoint(x: 0.368, y: 0.02 + 0.042 * reveal))
+                    farTusk.closeSubpath()
+                    context.addPath(farTusk)
+                    context.fillPath()
+                }
+
+                // Lower jaw as a tapered wedge — thick at the joint, narrowing
+                // to the chin. An ellipse of even thickness reads as a paddle.
+                let jawPath = CGMutablePath()
+                jawPath.move(to: CGPoint(x: 0.11, y: 0.05))
+                jawPath.addQuadCurve(to: CGPoint(x: 0.56, y: 0.02),
+                                     control: CGPoint(x: 0.34, y: 0.06))
+                jawPath.addQuadCurve(to: CGPoint(x: 0.50, y: -0.07),
+                                     control: CGPoint(x: 0.60, y: -0.03))
+                jawPath.addQuadCurve(to: CGPoint(x: 0.11, y: -0.05),
+                                     control: CGPoint(x: 0.30, y: -0.11))
+                jawPath.closeSubpath()
+                context.setFillColor(snoutGray)
+                context.addPath(jawPath)
+                context.fillPath()
+
+                // Near-side tusk, rooted *inside* the jaw so it grows out of
+                // the jaw line rather than floating in the cavity. Brighter
+                // and taller than the far one. The tongue that used to sit
+                // here was detail the tile is too small to carry — it only
+                // ever read as a stray shape.
+                if gape > 0.40 {
+                    let reveal = min(1.0, (gape - 0.40) / 0.35)
+                    context.setFillColor(CGColor(red: 0.96, green: 0.94, blue: 0.88, alpha: 1))
+                    let tusk = CGMutablePath()
+                    tusk.move(to: CGPoint(x: 0.44, y: -0.01))
+                    tusk.addLine(to: CGPoint(x: 0.49, y: -0.012))
+                    tusk.addLine(to: CGPoint(x: 0.472, y: 0.02 + 0.05 * reveal))
+                    tusk.closeSubpath()
+                    context.addPath(tusk)
+                    context.fillPath()
+                }
+            }
+        }
+
+        // Upper muzzle and nostrils lift together, so the nostrils stay put on
+        // the snout as it rises.
+        withHinge(context, at: jaw, angle: upperAngle) {
+            context.setFillColor(snoutGray)
+            context.fillEllipse(in: CGRect(x: 0.15, y: -0.08, width: 0.4, height: 0.26))
+
+            // Nostrils — bigger
+            context.setFillColor(CGColor(red: 0.25, green: 0.2, blue: 0.22, alpha: 1))
+            context.fillEllipse(in: CGRect(x: 0.33, y: 0.08, width: 0.08, height: 0.05))
+            context.fillEllipse(in: CGRect(x: 0.42, y: 0.08, width: 0.08, height: 0.05))
+        }
 
         // Ears — small bumps on top
         context.setFillColor(hippoGray)
@@ -1011,13 +1212,41 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: -0.06, y: 0.43, width: 0.02, height: 0.02))
         context.fillEllipse(in: CGRect(x: 0.04, y: 0.43, width: 0.02, height: 0.02))
 
-        // Beak — small orange triangle
+        // Beak — small orange triangle that splits into upper and lower
+        // mandibles on the mouth cycle, hinged at the face.
         let orange = CGColor(red: 0.95, green: 0.6, blue: 0.15, alpha: 1)
+        let gape = duck.mouth.openness
+        // This beak points down from its base, so the jaw joint sits at the
+        // base and the lower mandible swings forward off the tip.
+        let beakJoint = CGPoint(x: -0.05, y: 0.355)
+        let beakAngle = -0.60 * gape
+
+        if gape > 0.01 {
+            context.setFillColor(CGColor(red: 0.40, green: 0.14, blue: 0.14, alpha: 1))
+            context.addPath(gapeWedge(hinge: beakJoint,
+                                      edge: CGPoint(x: 0.06, y: 0.33), to: beakAngle))
+            context.fillPath()
+
+            // Lower mandible, swung about the joint
+            withHinge(context, at: beakJoint, angle: beakAngle) {
+                context.setFillColor(CGColor(red: 0.80, green: 0.48, blue: 0.10, alpha: 1))
+                let lowerBeak = CGMutablePath()
+                lowerBeak.move(to: CGPoint(x: -0.05, y: 0.35))
+                lowerBeak.addLine(to: CGPoint(x: 0.06, y: 0.34))
+                lowerBeak.addLine(to: CGPoint(x: 0.0, y: 0.28))
+                lowerBeak.closeSubpath()
+                context.addPath(lowerBeak)
+                context.fillPath()
+            }
+        }
+
+        // Upper mandible — shortens slightly as the beak parts so the two
+        // halves don't overlap into a single blob.
         context.setFillColor(orange)
         let beak = CGMutablePath()
         beak.move(to: CGPoint(x: -0.06, y: 0.36))
         beak.addLine(to: CGPoint(x: 0.06, y: 0.36))
-        beak.addLine(to: CGPoint(x: 0.0, y: 0.28))
+        beak.addLine(to: CGPoint(x: 0.0, y: 0.28 + 0.03 * gape))
         beak.closeSubpath()
         context.addPath(beak)
         context.fillPath()
