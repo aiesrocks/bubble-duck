@@ -288,6 +288,19 @@ public struct SimulationState: Sendable {
         }
     }
 
+    /// Which end of the tile the `.auto`-positioned readout currently sits
+    /// at. Held across frames so `TileReadoutPlacement` can be sticky: the
+    /// text only moves when the agent actually fouls the band it's in.
+    private var readoutIsTop: Bool = false
+
+    /// The readout position the renderer should actually draw at — the
+    /// configured one, except for `.auto`, which resolves to `.top` or
+    /// `.bottom` depending on where the agent is floating.
+    public var resolvedTileReadoutPosition: TileReadoutPosition {
+        guard config.tileReadout.position == .auto else { return config.tileReadout.position }
+        return readoutIsTop ? .top : .bottom
+    }
+
     /// Mean water surface height, 0...1. Used to work out what the tile
     /// readout is sitting on; per-column ripples average out.
     public var averageWaterLevel: Double {
@@ -413,6 +426,18 @@ public struct SimulationState: Sendable {
             if isLowPower && ripples.count > 20 {
                 ripples.removeFirst(ripples.count - 20)
             }
+        }
+
+        // Keep the auto-positioned readout out from under the agent. Done
+        // after the agent has moved so the text reacts on the same frame.
+        if config.tileReadout.position == .auto {
+            readoutIsTop = duck.enabled
+                ? TileReadoutPlacement.resolveIsTop(
+                    currentIsTop: readoutIsTop,
+                    agentY: duck.y,
+                    agentExtent: duck.minimumY,
+                    fontScale: config.tileReadout.fontScale)
+                : false
         }
 
         // Animate overlay alpha

@@ -178,11 +178,14 @@ struct BubbleRenderer {
         let x = (size - textSize.width) / 2
 
         // CG origin is bottom-left; `bottom` is wmbubble's gauge position.
+        // `.auto` has already been resolved to top/bottom by the simulation,
+        // which knows where the agent is floating.
         let y: Double
-        switch cfg.position {
-        case .top:    y = size - textSize.height - size * 0.03
+        let inset = size * TileReadoutPlacement.edgeInset
+        switch state.resolvedTileReadoutPosition {
+        case .top:    y = size - textSize.height - inset
         case .center: y = (size - textSize.height) / 2
-        case .bottom: y = size * 0.03
+        case .bottom, .auto: y = inset
         }
 
         // Resolve the text color. In auto mode it's a gentle inverse of

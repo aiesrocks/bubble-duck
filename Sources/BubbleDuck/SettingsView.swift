@@ -170,7 +170,7 @@ struct SettingsView: View {
             ),
             SettingsGroup(
                 id: "readout", title: "Tile readout",
-                keywords: "text cpu memory percent countdown color outline backdrop position size opacity",
+                keywords: "text cpu memory percent countdown color outline backdrop position size opacity auto avoid agent duck",
                 advancedOnly: false, content: { AnyView(readoutGroup) }
             ),
             SettingsGroup(
@@ -332,6 +332,11 @@ struct SettingsView: View {
                 ForEach(TileReadoutPosition.allCases, id: \.self) { position in
                     Text(position.rawValue).tag(position)
                 }
+            }
+            if store.config.tileReadout.position == .auto {
+                Text("Sits at the bottom while the agent floats high, and moves "
+                     + "to the top once a draining tank drops it onto the floor.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Picker("Text color", selection: $store.config.tileReadout.colorMode) {
                 ForEach(TileReadoutColorMode.allCases, id: \.self) { mode in

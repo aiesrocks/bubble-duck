@@ -34,6 +34,55 @@ public enum TileReadoutPosition: String, Sendable, Equatable, Codable, CaseItera
     case top = "Top"
     case center = "Center"
     case bottom = "Bottom"
+    /// Top or bottom, whichever the floating agent is not currently sitting
+    /// in. A full tank floats the agent up into the top band, an empty one
+    /// parks it on the floor — see `TileReadoutPlacement`.
+    case auto = "Auto (avoid agent)"
+}
+
+/// Geometry for the `.auto` readout position: which end of the tile the text
+/// should sit at so the floating agent doesn't sit on top of it.
+///
+/// The agent rides the water surface, so this tracks the water level without
+/// reading it: a full tank pushes the agent into the top band and the text
+/// drops to the bottom; an empty tank parks the agent on the floor and the
+/// text moves up.
+public enum TileReadoutPlacement {
+    /// Tile-fraction gap the renderer leaves at the top/bottom edge.
+    public static let edgeInset: Double = 0.03
+    /// Extra breathing room demanded between agent silhouette and text band.
+    public static let clearance: Double = 0.02
+
+    /// Height of one line of readout text as a fraction of the tile. Mirrors
+    /// the renderer: font size is `tile * fontScale`, and the system font's
+    /// line height runs roughly 1.25x the point size.
+    public static func textHeight(fontScale: Double) -> Double {
+        max(0.04, min(0.40, fontScale)) * 1.25
+    }
+
+    /// Decide which end the auto-positioned readout sits at; true means top.
+    ///
+    /// Only *collisions* move the text. While the agent is clear of both
+    /// bands the current side is kept, which leaves a wide dead zone in the
+    /// middle so per-frame ripple wobble can't flip the text every other
+    /// frame. If the agent fouls both bands (very large agent) the text stays
+    /// put rather than oscillating.
+    ///
+    /// `agentY` is the agent's origin in 0...1 tile coordinates and
+    /// `agentExtent` how far its silhouette reaches either side of that.
+    public static func resolveIsTop(currentIsTop: Bool, agentY: Double,
+                                    agentExtent: Double, fontScale: Double) -> Bool {
+        let band = textHeight(fontScale: fontScale)
+        let bottomBandTop = edgeInset + band + clearance
+        let topBandBottom = 1 - edgeInset - band - clearance
+        let foulsBottom = agentY - agentExtent < bottomBandTop
+        let foulsTop = agentY + agentExtent > topBandBottom
+
+        if currentIsTop {
+            return !(foulsTop && !foulsBottom)
+        }
+        return foulsBottom && !foulsTop
+    }
 }
 
 /// How the readout's text color is chosen.
