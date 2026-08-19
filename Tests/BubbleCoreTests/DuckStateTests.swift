@@ -189,3 +189,71 @@ struct DuckStateTests {
         #expect(DuckState.idleCPUThreshold == 0.10)
     }
 }
+
+@Suite("Paddling")
+struct PaddlingTests {
+    private let levels = Array(repeating: 0.5, count: 16)
+
+    @Test("the stroke phase advances while the agent is swimming")
+    func phaseAdvances() {
+        var duck = DuckState()
+        duck.step(waterLevels: levels)
+        #expect(duck.strokePhase > 0)
+    }
+
+    @Test("a faster speed metric paddles faster")
+    func fasterMetricPaddlesFaster() {
+        var slow = DuckState()
+        var fast = DuckState()
+        fast.speedFactor = 1.0
+        for _ in 0..<20 {
+            slow.step(waterLevels: levels)
+            fast.step(waterLevels: levels)
+        }
+        #expect(fast.strokePhase > slow.strokePhase)
+        #expect(slow.strokePhase > 0, "even a resting agent paddles gently")
+    }
+
+    @Test("the stroke rate spans the advertised range")
+    func rateRange() {
+        var duck = DuckState()
+        duck.speedFactor = 0
+        #expect(duck.strokeRate == DuckState.strokeRateRange.lowerBound)
+        duck.speedFactor = 1
+        #expect(duck.strokeRate == DuckState.strokeRateRange.upperBound)
+    }
+
+    @Test("the phase wraps instead of growing without bound")
+    func phaseWraps() {
+        var duck = DuckState()
+        duck.speedFactor = 1.0
+        for _ in 0..<600 { duck.step(waterLevels: levels) }
+        #expect(duck.strokePhase >= 0)
+        #expect(duck.strokePhase <= .pi * 2)
+    }
+
+    @Test("a sleeping agent lets its limbs hang still")
+    func sleepingAgentStopsPaddling() {
+        var duck = DuckState()
+        duck.speedFactor = 1.0
+        duck.sleepiness = 1.0
+        #expect(duck.strokeIntensity == 0)
+    }
+
+    @Test("swing scales up with the speed metric")
+    func swingScalesWithMetric() {
+        var resting = DuckState()
+        var working = DuckState()
+        working.speedFactor = 1.0
+        #expect(working.strokeIntensity > resting.strokeIntensity)
+        #expect(resting.strokeIntensity > 0)
+    }
+
+    @Test("following water without stepping leaves the phase alone")
+    func reducedMotionDoesNotPaddle() {
+        var duck = DuckState()
+        duck.speedFactor = 1.0
+        duck.followWater(waterLevels: levels)
+        #expect(duck.strokePhase == 0)
+    }
+}

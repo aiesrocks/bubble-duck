@@ -123,6 +123,12 @@ struct BubbleRenderer {
             drawSleepZ(duck: state.duck, size: s)
         }
 
+        // Whatever was thrown at the agent, drawn last so it passes in front
+        // of the character it's aimed at.
+        if !state.treats.isEmpty || !state.crumbs.isEmpty {
+            drawTreats(context: context, state: state, size: s)
+        }
+
         // The tile's one always-on readout — wmbubble's CPU digits by default,
         // or a Claude figure in the same slot.
         drawTileReadout(context: context, state: state, now: now, size: s,
@@ -542,7 +548,12 @@ struct BubbleRenderer {
         let bob = sin(duck.bobAngle) * duck.bobAmplitude
 
         context.saveGState()
-        context.translateBy(x: dx, y: dy + bob)
+        context.translateBy(x: dx, y: dy + bob + duck.hopOffset * size)
+        // Roll about the waterline, not about the middle of the character —
+        // a startled boat pivots where it sits in the water.
+        if duck.tiltAngle != 0 {
+            context.rotate(by: duck.tiltAngle)
+        }
         context.translateBy(x: 0, y: -agentSize * 0.1)
 
         if duck.isUpsideDown {
@@ -832,10 +843,17 @@ struct BubbleRenderer {
         fillEyeGlint(context, x: 0.37, y: 0.14, width: 0.02, height: 0.02, openness: oOtter)
         fillEyeGlint(context, x: 0.47, y: 0.14, width: 0.02, height: 0.02, openness: oOtter)
 
-        // Little paws resting on belly
+        // Little paws resting on belly — they work half a cycle apart, which
+        // is the otter's version of paddling: fussing with something on its
+        // chest rather than swimming.
+        let paw = sin(duck.strokePhase) * 0.34 * duck.strokeIntensity
         context.setFillColor(furColor)
-        context.fillEllipse(in: CGRect(x: 0.0, y: 0.06, width: 0.1, height: 0.08))
-        context.fillEllipse(in: CGRect(x: 0.12, y: 0.06, width: 0.1, height: 0.08))
+        withHinge(context, at: CGPoint(x: 0.05, y: 0.02), angle: paw) {
+            context.fillEllipse(in: CGRect(x: 0.0, y: 0.06, width: 0.1, height: 0.08))
+        }
+        withHinge(context, at: CGPoint(x: 0.17, y: 0.02), angle: -paw) {
+            context.fillEllipse(in: CGRect(x: 0.12, y: 0.06, width: 0.1, height: 0.08))
+        }
 
         // Chubby tail
         context.fillEllipse(in: CGRect(x: -0.5, y: -0.1, width: 0.18, height: 0.14))
@@ -845,46 +863,185 @@ struct BubbleRenderer {
 
     // MARK: - Turtle (slow, steady)
 
+    /// A red-eared slider, which is what most people picture when they hear
+    /// "turtle". The three cues doing the work at Dock size are the scute
+    /// grid on the carapace, a head on an actual neck with a snout, and the
+    /// red ear stripe — the previous stack of plain ellipses had none of
+    /// them and read as a green blob.
     private func drawTurtle(context: CGContext, duck: DuckState, size: Double) {
-        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.28)
+        _ = beginAgent(context: context, duck: duck, size: size, agentScale: 0.30)
 
-        // Shell — big dome shape
-        let shellColor = CGColor(red: 0.3, green: 0.45, blue: 0.2, alpha: 1)
+        let shellColor = CGColor(red: 0.30, green: 0.42, blue: 0.20, alpha: 1)
+        let shellDark = CGColor(red: 0.19, green: 0.28, blue: 0.11, alpha: 1)
+        let scuteLine = CGColor(red: 0.14, green: 0.22, blue: 0.08, alpha: 1)
+        let marginal = CGColor(red: 0.44, green: 0.40, blue: 0.14, alpha: 1)
+        let skinColor = CGColor(red: 0.40, green: 0.53, blue: 0.26, alpha: 1)
+        let skinDark = CGColor(red: 0.29, green: 0.40, blue: 0.18, alpha: 1)
+        let stripe = CGColor(red: 0.86, green: 0.83, blue: 0.35, alpha: 1)
+
+        // Both flippers swing about their own shoulder, half a cycle apart so
+        // the turtle rows rather than doing jumping jacks. The rate and swing
+        // come from `DuckState`, which stops advancing under Reduce Motion.
+        let paddle = duck.strokeIntensity
+        let frontSwing = sin(duck.strokePhase) * 0.30 * paddle
+        let backSwing = sin(duck.strokePhase + .pi) * 0.22 * paddle
+
+        // Rear flippers first — they sit behind the shell.
+        context.setFillColor(skinDark)
+        withHinge(context, at: CGPoint(x: -0.28, y: -0.11), angle: backSwing) {
+            let backFlipper = CGMutablePath()
+            backFlipper.move(to: CGPoint(x: -0.30, y: -0.10))
+            backFlipper.addQuadCurve(to: CGPoint(x: -0.52, y: -0.20),
+                                     control: CGPoint(x: -0.46, y: -0.08))
+            backFlipper.addQuadCurve(to: CGPoint(x: -0.26, y: -0.17),
+                                     control: CGPoint(x: -0.38, y: -0.22))
+            backFlipper.closeSubpath()
+            context.addPath(backFlipper)
+            context.fillPath()
+        }
+
+        // Front flipper, angled forward and tapered — a paddle that's rowing,
+        // not an ellipse parked under the shell.
+        context.setFillColor(skinColor)
+        withHinge(context, at: CGPoint(x: 0.11, y: -0.12), angle: frontSwing) {
+            let frontFlipper = CGMutablePath()
+            frontFlipper.move(to: CGPoint(x: 0.10, y: -0.08))
+            frontFlipper.addQuadCurve(to: CGPoint(x: 0.46, y: -0.24),
+                                      control: CGPoint(x: 0.34, y: -0.06))
+            frontFlipper.addQuadCurve(to: CGPoint(x: 0.08, y: -0.18),
+                                      control: CGPoint(x: 0.24, y: -0.24))
+            frontFlipper.closeSubpath()
+            context.addPath(frontFlipper)
+            context.fillPath()
+        }
+
+        // Neck, then head — a turtle's head is on a neck, and that gap is
+        // most of what separates it from a beetle.
+        context.setFillColor(skinColor)
+        // Curved on both edges so it runs into the head instead of meeting
+        // it at a corner — a square-ended neck reads as a separate block
+        // parked behind the head.
+        let neck = CGMutablePath()
+        neck.move(to: CGPoint(x: 0.12, y: 0.15))
+        neck.addQuadCurve(to: CGPoint(x: 0.44, y: 0.28),
+                          control: CGPoint(x: 0.32, y: 0.16))
+        neck.addLine(to: CGPoint(x: 0.44, y: 0.01))
+        neck.addQuadCurve(to: CGPoint(x: 0.12, y: 0.02),
+                          control: CGPoint(x: 0.28, y: -0.03))
+        neck.closeSubpath()
+        context.addPath(neck)
+        context.fillPath()
+
+        // Head with a blunt snout at the front. Sized at about a third of the
+        // shell — smaller than that and it disappears into the silhouette.
+        // The back of the skull is curved, not a flat wall: a straight closing
+        // edge there left a square corner sticking up out of the neck.
+        let head = CGMutablePath()
+        head.move(to: CGPoint(x: 0.26, y: 0.19))
+        head.addQuadCurve(to: CGPoint(x: 0.50, y: 0.305),
+                          control: CGPoint(x: 0.33, y: 0.30))
+        head.addQuadCurve(to: CGPoint(x: 0.68, y: 0.20),
+                          control: CGPoint(x: 0.63, y: 0.31))
+        head.addQuadCurve(to: CGPoint(x: 0.64, y: 0.04),
+                          control: CGPoint(x: 0.73, y: 0.09))
+        head.addQuadCurve(to: CGPoint(x: 0.30, y: 0.02),
+                          control: CGPoint(x: 0.48, y: -0.02))
+        head.addQuadCurve(to: CGPoint(x: 0.26, y: 0.19),
+                          control: CGPoint(x: 0.235, y: 0.09))
+        head.closeSubpath()
+        context.addPath(head)
+        context.fillPath()
+
+        // Mouth line at the snout — a beak, not a smile.
+        context.setStrokeColor(skinDark)
+        context.setLineWidth(0.018)
+        context.move(to: CGPoint(x: 0.585, y: 0.085))
+        context.addLine(to: CGPoint(x: 0.675, y: 0.105))
+        context.strokePath()
+
+        // Yellow neck striping, and the red ear patch that names the species.
+        // Round-capped strokes rather than rectangles — square ends stick out
+        // past the head as little yellow tabs.
+        context.setStrokeColor(stripe)
+        context.setLineCap(.round)
+        context.setLineWidth(0.032)
+        context.move(to: CGPoint(x: 0.19, y: 0.175))
+        context.addLine(to: CGPoint(x: 0.39, y: 0.190))
+        context.strokePath()
+        context.setLineWidth(0.028)
+        context.move(to: CGPoint(x: 0.21, y: 0.090))
+        context.addLine(to: CGPoint(x: 0.39, y: 0.082))
+        context.strokePath()
+        // The ear stripe runs back from behind the eye — drawn as a stripe
+        // rather than a blob, which at this size reads as a second eye.
+        context.setFillColor(CGColor(red: 0.82, green: 0.18, blue: 0.12, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.285, y: 0.132, width: 0.170, height: 0.052))
+
+        // Carapace: a dome with a flat underside, so it sits in the water
+        // rather than bobbing like a ball.
+        let shell = CGMutablePath()
+        shell.move(to: CGPoint(x: -0.52, y: -0.04))
+        shell.addCurve(to: CGPoint(x: 0.34, y: -0.04),
+                       control1: CGPoint(x: -0.46, y: 0.40),
+                       control2: CGPoint(x: 0.28, y: 0.40))
+        shell.addQuadCurve(to: CGPoint(x: -0.52, y: -0.04),
+                           control: CGPoint(x: -0.09, y: -0.16))
+        shell.closeSubpath()
         context.setFillColor(shellColor)
-        context.fillEllipse(in: CGRect(x: -0.4, y: -0.12, width: 0.8, height: 0.5))
+        context.addPath(shell)
+        context.fillPath()
 
-        // Shell rim — darker edge
-        context.setFillColor(CGColor(red: 0.22, green: 0.35, blue: 0.14, alpha: 1))
-        context.setLineWidth(0.02)
-        context.strokeEllipse(in: CGRect(x: -0.4, y: -0.12, width: 0.8, height: 0.5))
+        // Marginal scutes — the serrated rim, drawn as a band along the
+        // bottom edge of the shell.
+        context.saveGState()
+        context.addPath(shell)
+        context.clip()
+        context.setFillColor(marginal)
+        context.fill(CGRect(x: -0.6, y: -0.16, width: 1.1, height: 0.10))
+        context.setStrokeColor(scuteLine)
+        context.setLineWidth(0.016)
+        for i in 0..<6 {
+            let x = -0.42 + Double(i) * 0.155
+            context.move(to: CGPoint(x: x, y: -0.16))
+            context.addLine(to: CGPoint(x: x, y: -0.06))
+        }
+        context.strokePath()
 
-        // Shell pattern — darker hexagonal segments
-        context.setFillColor(CGColor(red: 0.2, green: 0.35, blue: 0.12, alpha: 1))
-        context.fillEllipse(in: CGRect(x: -0.18, y: 0.02, width: 0.22, height: 0.22))
-        context.fillEllipse(in: CGRect(x: 0.05, y: 0.0, width: 0.2, height: 0.2))
-        context.fillEllipse(in: CGRect(x: -0.08, y: -0.06, width: 0.18, height: 0.14))
+        // Vertebral scutes down the spine plus the costal seams either side.
+        // Five plates in a row is the read; the exact hexagons are mush at
+        // this size, so they're drawn as a grid of seams instead.
+        context.setFillColor(shellDark)
+        context.fill(CGRect(x: -0.34, y: -0.06, width: 0.62, height: 0.34))
+        context.setStrokeColor(scuteLine)
+        context.setLineWidth(0.020)
+        context.move(to: CGPoint(x: -0.34, y: -0.06))
+        context.addLine(to: CGPoint(x: -0.34, y: 0.30))
+        context.move(to: CGPoint(x: 0.28, y: -0.06))
+        context.addLine(to: CGPoint(x: 0.28, y: 0.30))
+        for i in 0..<4 {
+            let x = -0.34 + Double(i + 1) * 0.124
+            context.move(to: CGPoint(x: x, y: -0.06))
+            context.addLine(to: CGPoint(x: x, y: 0.32))
+        }
+        context.strokePath()
+        context.restoreGState()
 
-        // Head — poking out right
-        let skinColor = CGColor(red: 0.4, green: 0.55, blue: 0.3, alpha: 1)
-        context.setFillColor(skinColor)
-        context.fillEllipse(in: CGRect(x: 0.3, y: 0.0, width: 0.28, height: 0.24))
+        // Shell outline last, so every seam ends cleanly against it. Kept
+        // thin and only a shade darker than the shell — a heavy black rim
+        // reads as a sticker rather than as a carapace.
+        context.setStrokeColor(CGColor(red: 0.22, green: 0.31, blue: 0.14, alpha: 1))
+        context.setLineWidth(0.011)
+        context.addPath(shell)
+        context.strokePath()
 
-        // Eye
+        // Eye — set into the head, above the red patch.
         let oTurtle = duck.effectiveEyelidOpenness
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        fillEye(context, x: 0.46, y: 0.13, width: 0.06, height: 0.06, openness: oTurtle)
-
-        // Eye glint
-        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
-        fillEyeGlint(context, x: 0.48, y: 0.15, width: 0.02, height: 0.02, openness: oTurtle)
-
-        // Front flippers — bigger, paddle-shaped
-        context.setFillColor(skinColor)
-        context.fillEllipse(in: CGRect(x: 0.15, y: -0.22, width: 0.2, height: 0.14))
-        context.fillEllipse(in: CGRect(x: -0.2, y: -0.22, width: 0.2, height: 0.14))
-
-        // Back flippers
-        context.fillEllipse(in: CGRect(x: -0.38, y: -0.15, width: 0.14, height: 0.1))
+        context.setFillColor(CGColor(red: 0.93, green: 0.93, blue: 0.88, alpha: 1))
+        fillEye(context, x: 0.492, y: 0.150, width: 0.090, height: 0.090, openness: oTurtle)
+        context.setFillColor(CGColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 1))
+        fillEye(context, x: 0.500, y: 0.150, width: 0.055, height: 0.055, openness: oTurtle)
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.85))
+        fillEyeGlint(context, x: 0.516, y: 0.168, width: 0.024, height: 0.024, openness: oTurtle)
 
         context.restoreGState()
     }
@@ -1262,33 +1419,40 @@ struct BubbleRenderer {
         context.addPath(beak)
         context.fillPath()
 
-        // Flippers — small wings at sides
+        // Flippers — small wings at sides. Both swing about their own
+        // shoulder in mirror image: this penguin faces the viewer, so one
+        // flipper up and one down would read as a bird falling over.
+        let flap = sin(duck.strokePhase) * 0.24 * duck.strokeIntensity
         context.setFillColor(black)
         // Left flipper
-        let leftFlipper = CGMutablePath()
-        leftFlipper.move(to: CGPoint(x: -0.24, y: 0.28))
-        leftFlipper.addCurve(to: CGPoint(x: -0.35, y: -0.02),
-                             control1: CGPoint(x: -0.38, y: 0.2),
-                             control2: CGPoint(x: -0.4, y: 0.05))
-        leftFlipper.addCurve(to: CGPoint(x: -0.22, y: 0.08),
-                             control1: CGPoint(x: -0.3, y: -0.05),
-                             control2: CGPoint(x: -0.24, y: 0.0))
-        leftFlipper.closeSubpath()
-        context.addPath(leftFlipper)
-        context.fillPath()
+        withHinge(context, at: CGPoint(x: -0.24, y: 0.28), angle: -flap) {
+            let leftFlipper = CGMutablePath()
+            leftFlipper.move(to: CGPoint(x: -0.24, y: 0.28))
+            leftFlipper.addCurve(to: CGPoint(x: -0.35, y: -0.02),
+                                 control1: CGPoint(x: -0.38, y: 0.2),
+                                 control2: CGPoint(x: -0.4, y: 0.05))
+            leftFlipper.addCurve(to: CGPoint(x: -0.22, y: 0.08),
+                                 control1: CGPoint(x: -0.3, y: -0.05),
+                                 control2: CGPoint(x: -0.24, y: 0.0))
+            leftFlipper.closeSubpath()
+            context.addPath(leftFlipper)
+            context.fillPath()
+        }
 
         // Right flipper
-        let rightFlipper = CGMutablePath()
-        rightFlipper.move(to: CGPoint(x: 0.24, y: 0.28))
-        rightFlipper.addCurve(to: CGPoint(x: 0.35, y: -0.02),
-                              control1: CGPoint(x: 0.38, y: 0.2),
-                              control2: CGPoint(x: 0.4, y: 0.05))
-        rightFlipper.addCurve(to: CGPoint(x: 0.22, y: 0.08),
-                              control1: CGPoint(x: 0.3, y: -0.05),
-                              control2: CGPoint(x: 0.24, y: 0.0))
-        rightFlipper.closeSubpath()
-        context.addPath(rightFlipper)
-        context.fillPath()
+        withHinge(context, at: CGPoint(x: 0.24, y: 0.28), angle: flap) {
+            let rightFlipper = CGMutablePath()
+            rightFlipper.move(to: CGPoint(x: 0.24, y: 0.28))
+            rightFlipper.addCurve(to: CGPoint(x: 0.35, y: -0.02),
+                                  control1: CGPoint(x: 0.38, y: 0.2),
+                                  control2: CGPoint(x: 0.4, y: 0.05))
+            rightFlipper.addCurve(to: CGPoint(x: 0.22, y: 0.08),
+                                  control1: CGPoint(x: 0.3, y: -0.05),
+                                  control2: CGPoint(x: 0.24, y: 0.0))
+            rightFlipper.closeSubpath()
+            context.addPath(rightFlipper)
+            context.fillPath()
+        }
 
         // Feet — small orange ovals poking below
         context.setFillColor(orange)
@@ -1296,6 +1460,263 @@ struct BubbleRenderer {
         context.fillEllipse(in: CGRect(x: 0.02, y: -0.18, width: 0.12, height: 0.07))
 
         context.restoreGState()
+    }
+
+    // MARK: - Treats
+
+    /// Radius each treat is drawn at, as a fraction of the canvas. Sized by
+    /// what it is rather than uniformly — a watermelon that reads as the same
+    /// size as a food pellet reads as neither.
+    private func treatRadius(_ kind: TreatKind) -> Double {
+        switch kind {
+        case .watermelon: return 0.058
+        case .rock:       return 0.044
+        case .pellet:     return 0.024
+        case .fish:       return 0.050
+        case .insect:     return 0.030
+        case .lettuce:    return 0.042
+        }
+    }
+
+    /// The colour a crumb of each kind is.
+    private func crumbColor(_ kind: TreatKind) -> (r: Double, g: Double, b: Double) {
+        switch kind {
+        case .watermelon: return (0.86, 0.22, 0.28)
+        case .rock:       return (0.52, 0.52, 0.54)
+        case .pellet:     return (0.55, 0.36, 0.16)
+        case .fish:       return (0.72, 0.76, 0.82)
+        case .insect:     return (0.24, 0.22, 0.26)
+        case .lettuce:    return (0.42, 0.72, 0.26)
+        }
+    }
+
+    /// Draws whatever was thrown at the agent, the frog's tongue reaching for
+    /// it, and any crumbs from a bite. Called after the agent so the treat
+    /// passes in front of it rather than behind.
+    private func drawTreats(context: CGContext, state: SimulationState, size s: Double) {
+        for treat in state.treats {
+            // The tongue goes out first, so the insect sits on the end of it.
+            if treat.behavior == .tongue && treat.tongueReach > 0 {
+                let mouth = state.treatTarget(for: .eaten, agent: state.config.agentType)
+                drawTongue(context: context,
+                           from: CGPoint(x: mouth.x * s, y: mouth.y * s),
+                           to: CGPoint(x: treat.x * s, y: treat.y * s),
+                           size: s)
+            }
+
+            let radius = treatRadius(treat.kind) * state.duck.sizeScale * s
+            context.saveGState()
+            context.translateBy(x: treat.x * s, y: treat.y * s)
+            context.rotate(by: treat.spin)
+            context.scaleBy(x: radius, y: radius)
+            switch treat.kind {
+            case .watermelon: drawWatermelon(context: context)
+            case .rock:       drawRock(context: context)
+            case .pellet:     drawPellet(context: context)
+            case .fish:       drawFish(context: context)
+            case .lettuce:    drawLettuce(context: context)
+            case .insect:     drawInsect(context: context, flutter: treat.flutter)
+            }
+            context.restoreGState()
+        }
+
+        for crumb in state.crumbs {
+            let c = crumbColor(crumb.kind)
+            let alpha = (1.0 - crumb.age) * 0.9
+            let r = max(0.8, s * 0.011 * (1.0 - crumb.age * 0.4))
+            context.setFillColor(CGColor(red: c.r, green: c.g, blue: c.b, alpha: alpha))
+            context.fillEllipse(in: CGRect(x: crumb.x * s - r, y: crumb.y * s - r,
+                                           width: r * 2, height: r * 2))
+        }
+    }
+
+    /// The frog's tongue: one thick pink stroke with a sticky tip.
+    private func drawTongue(context: CGContext, from mouth: CGPoint, to tip: CGPoint,
+                            size s: Double) {
+        context.setStrokeColor(CGColor(red: 0.90, green: 0.40, blue: 0.48, alpha: 1))
+        context.setLineWidth(max(1.2, s * 0.018))
+        context.setLineCap(.round)
+        context.beginPath()
+        context.move(to: mouth)
+        // A slight sag, so the tongue whips rather than pointing like a stick.
+        let sag = CGPoint(x: (mouth.x + tip.x) / 2, y: (mouth.y + tip.y) / 2 - s * 0.02)
+        context.addQuadCurve(to: tip, control: sag)
+        context.strokePath()
+
+        let tipRadius = max(1.0, s * 0.014)
+        context.setFillColor(CGColor(red: 0.95, green: 0.50, blue: 0.56, alpha: 1))
+        context.fillEllipse(in: CGRect(x: tip.x - tipRadius, y: tip.y - tipRadius,
+                                       width: tipRadius * 2, height: tipRadius * 2))
+    }
+
+    // Each treat is drawn in a unit space: roughly -1…1 on both axes,
+    // centred on the origin, so `drawTreats` only has to pick a radius.
+
+    private func drawWatermelon(context: CGContext) {
+        // A slice, flat side up: green rind arc, red flesh, three seeds.
+        let flesh = CGMutablePath()
+        flesh.move(to: CGPoint(x: -1, y: 0))
+        flesh.addArc(center: .zero, radius: 1, startAngle: .pi, endAngle: 0,
+                     clockwise: true)
+        flesh.closeSubpath()
+
+        context.setFillColor(CGColor(red: 0.20, green: 0.52, blue: 0.18, alpha: 1))
+        context.addPath(flesh)
+        context.fillPath()
+
+        let inner = CGMutablePath()
+        inner.move(to: CGPoint(x: -0.86, y: 0))
+        inner.addArc(center: .zero, radius: 0.86, startAngle: .pi, endAngle: 0,
+                     clockwise: true)
+        inner.closeSubpath()
+        context.setFillColor(CGColor(red: 0.93, green: 0.95, blue: 0.86, alpha: 1))
+        context.addPath(inner)
+        context.fillPath()
+
+        let pulp = CGMutablePath()
+        pulp.move(to: CGPoint(x: -0.74, y: 0))
+        pulp.addArc(center: .zero, radius: 0.74, startAngle: .pi, endAngle: 0,
+                    clockwise: true)
+        pulp.closeSubpath()
+        context.setFillColor(CGColor(red: 0.90, green: 0.24, blue: 0.30, alpha: 1))
+        context.addPath(pulp)
+        context.fillPath()
+
+        // The arc above sweeps the *upper* half, so the flesh is the dome and
+        // the cut face is the flat edge at y = 0. Seeds go at positive y or
+        // they sit outside the slice entirely.
+        context.setFillColor(CGColor(red: 0.15, green: 0.10, blue: 0.08, alpha: 1))
+        for seed in [CGPoint(x: -0.34, y: 0.26), CGPoint(x: 0.0, y: 0.42),
+                     CGPoint(x: 0.34, y: 0.26)] {
+            context.fillEllipse(in: CGRect(x: seed.x - 0.10, y: seed.y - 0.13,
+                                           width: 0.20, height: 0.26))
+        }
+    }
+
+    private func drawRock(context: CGContext) {
+        // A fixed irregular heptagon — a circle reads as a ball, and random
+        // vertices per frame would make it boil.
+        let radii = [1.0, 0.82, 0.95, 0.78, 1.0, 0.85, 0.9]
+        let rock = CGMutablePath()
+        for (i, r) in radii.enumerated() {
+            let a = Double(i) / Double(radii.count) * 2 * .pi
+            let p = CGPoint(x: cos(a) * r, y: sin(a) * r * 0.85)
+            if i == 0 { rock.move(to: p) } else { rock.addLine(to: p) }
+        }
+        rock.closeSubpath()
+
+        context.setFillColor(CGColor(red: 0.44, green: 0.44, blue: 0.47, alpha: 1))
+        context.addPath(rock)
+        context.fillPath()
+
+        // A lit facet on one side gives it volume without any shading work.
+        let facet = CGMutablePath()
+        facet.move(to: CGPoint(x: -0.55, y: 0.30))
+        facet.addLine(to: CGPoint(x: 0.10, y: 0.62))
+        facet.addLine(to: CGPoint(x: 0.30, y: 0.05))
+        facet.addLine(to: CGPoint(x: -0.30, y: -0.10))
+        facet.closeSubpath()
+        context.setFillColor(CGColor(red: 0.60, green: 0.60, blue: 0.63, alpha: 1))
+        context.addPath(facet)
+        context.fillPath()
+
+        context.setStrokeColor(CGColor(red: 0.26, green: 0.26, blue: 0.29, alpha: 1))
+        context.setLineWidth(0.10)
+        context.addPath(rock)
+        context.strokePath()
+    }
+
+    private func drawPellet(context: CGContext) {
+        context.setFillColor(CGColor(red: 0.58, green: 0.38, blue: 0.16, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -1, y: -0.62, width: 2, height: 1.24))
+        context.setFillColor(CGColor(red: 0.72, green: 0.52, blue: 0.26, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.62, y: -0.10, width: 0.8, height: 0.42))
+    }
+
+    private func drawFish(context: CGContext) {
+        // Body
+        context.setFillColor(CGColor(red: 0.68, green: 0.74, blue: 0.82, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.75, y: -0.42, width: 1.55, height: 0.84))
+
+        // Tail
+        let tail = CGMutablePath()
+        tail.move(to: CGPoint(x: -0.55, y: 0))
+        tail.addLine(to: CGPoint(x: -1.05, y: 0.45))
+        tail.addLine(to: CGPoint(x: -1.05, y: -0.45))
+        tail.closeSubpath()
+        context.setFillColor(CGColor(red: 0.55, green: 0.62, blue: 0.72, alpha: 1))
+        context.addPath(tail)
+        context.fillPath()
+
+        // Belly and eye
+        context.setFillColor(CGColor(red: 0.88, green: 0.91, blue: 0.95, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.5, y: -0.36, width: 1.0, height: 0.34))
+        context.setFillColor(CGColor(red: 0.10, green: 0.10, blue: 0.14, alpha: 1))
+        context.fillEllipse(in: CGRect(x: 0.36, y: 0.02, width: 0.22, height: 0.22))
+    }
+
+    private func drawLettuce(context: CGContext) {
+        // A leaf with a wavy edge — the crinkle is the whole read, a plain
+        // green oval would just look like a bubble.
+        let leaf = CGMutablePath()
+        leaf.move(to: CGPoint(x: -0.95, y: -0.10))
+        leaf.addCurve(to: CGPoint(x: 0.0, y: 0.85),
+                      control1: CGPoint(x: -0.75, y: 0.55), control2: CGPoint(x: -0.35, y: 0.60))
+        leaf.addCurve(to: CGPoint(x: 0.95, y: -0.10),
+                      control1: CGPoint(x: 0.40, y: 0.62), control2: CGPoint(x: 0.78, y: 0.58))
+        leaf.addCurve(to: CGPoint(x: 0.0, y: -0.72),
+                      control1: CGPoint(x: 0.62, y: -0.55), control2: CGPoint(x: 0.35, y: -0.42))
+        leaf.addCurve(to: CGPoint(x: -0.95, y: -0.10),
+                      control1: CGPoint(x: -0.38, y: -0.44), control2: CGPoint(x: -0.66, y: -0.58))
+        leaf.closeSubpath()
+
+        context.setFillColor(CGColor(red: 0.46, green: 0.76, blue: 0.28, alpha: 1))
+        context.addPath(leaf)
+        context.fillPath()
+
+        // Midrib and two veins, in the paler green a lettuce stem actually is.
+        context.setStrokeColor(CGColor(red: 0.80, green: 0.92, blue: 0.62, alpha: 1))
+        context.setLineWidth(0.14)
+        context.setLineCap(.round)
+        context.move(to: CGPoint(x: -0.72, y: -0.16))
+        context.addLine(to: CGPoint(x: 0.55, y: 0.30))
+        context.strokePath()
+
+        context.setLineWidth(0.09)
+        context.move(to: CGPoint(x: -0.20, y: 0.02))
+        context.addLine(to: CGPoint(x: -0.05, y: 0.55))
+        context.move(to: CGPoint(x: 0.18, y: 0.18))
+        context.addLine(to: CGPoint(x: 0.34, y: -0.34))
+        context.strokePath()
+    }
+
+    private func drawInsect(context: CGContext, flutter: Double) {
+        // Wings beat far faster than the body moves, which is most of what
+        // makes it read as a live insect and not a floating pellet.
+        let beat = 0.35 + 0.65 * abs(sin(flutter * 26.0))
+        context.setFillColor(CGColor(red: 0.80, green: 0.88, blue: 0.95, alpha: 0.55))
+        for side in [1.0, -1.0] {
+            context.saveGState()
+            context.translateBy(x: 0, y: 0.15)
+            context.scaleBy(x: 1, y: beat)
+            context.fillEllipse(in: CGRect(x: -0.15, y: side > 0 ? 0.05 : -0.85,
+                                           width: 1.0, height: 0.8))
+            context.restoreGState()
+        }
+
+        // Body, head, antennae.
+        context.setFillColor(CGColor(red: 0.22, green: 0.20, blue: 0.24, alpha: 1))
+        context.fillEllipse(in: CGRect(x: -0.7, y: -0.30, width: 1.2, height: 0.6))
+        context.fillEllipse(in: CGRect(x: 0.36, y: -0.26, width: 0.5, height: 0.52))
+
+        context.setStrokeColor(CGColor(red: 0.22, green: 0.20, blue: 0.24, alpha: 1))
+        context.setLineWidth(0.10)
+        context.setLineCap(.round)
+        context.move(to: CGPoint(x: 0.72, y: 0.16))
+        context.addLine(to: CGPoint(x: 1.10, y: 0.52))
+        context.move(to: CGPoint(x: 0.72, y: 0.04))
+        context.addLine(to: CGPoint(x: 1.14, y: 0.10))
+        context.strokePath()
     }
 
     // MARK: - Helpers

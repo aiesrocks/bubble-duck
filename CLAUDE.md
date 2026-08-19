@@ -59,6 +59,70 @@ open .build/BubbleDuck.app     # Launch
 | Rain | Disk IOPS *(default)*, or any other `MetricSource` | Quiet below 10% of the chosen metric, ramping to full — with disk IOPS that's the original 500→5000 range. Toggleable in Settings |
 | Sky color | Time of day | 4 anchors: dawn/noon/dusk/night, smooth blending |
 
+## Poke Reactions (treats)
+
+Clicking the Dock icon (or "Poke Agent", or hover when it's enabled) lobs the
+agent something to eat. `Treat.swift` in BubbleCore owns the whole thing;
+`BubbleRenderer` only draws it.
+
+| Species | Treat | Behavior |
+|---|---|---|
+| Hippo | Watermelon slice | `.eaten` — arcs into the open mouth, which snaps shut, crumbs scatter |
+| Mandarin duck | Food pellet | `.eaten` |
+| Otter, penguin | Fish | `.eaten` |
+| Turtle | Lettuce leaf | `.eaten` |
+| Frog | Insect | `.tongue` — the insect hovers in front, then the tongue fires out and drags it back |
+| Rubber duck, origami boat | Rock | `.splash` — neither has a mouth, so it lands in the water beside them and startles them |
+
+Notes that matter when changing this:
+
+- **Flight is timed against the mouth, not the clock.** `treatFlightTime` is
+  the species' `mouthProfile.holdStart × duration` (floored at 0.5s), so the
+  treat lands while the mouth is at full gape. A hippo's 3.6s gape gets a
+  longer lob than a duck's 0.9s snap. Changing a `MouthProfile` moves the
+  throw with it.
+- **The arc re-solves every frame** against the current mouth position
+  (`Treat.arcPosition`), which is why a treat still lands in the mouth of an
+  agent that drifted mid-throw. There is deliberately no miss case.
+- **`treatAnchor` mirrors renderer geometry.** Each anchor is that species'
+  `agentScale × ` its mouth position in agent-local units, with the
+  renderer's fixed `-0.1` vertical shift folded in. Move a mouth in
+  `BubbleRenderer` and the anchor has to move too.
+- **`.splash` drives `DuckState.startle`** — a hop under gravity plus a
+  damped tilt spring, both applied in `beginAgent`. The impulse is a `max`,
+  not a sum, so repeated poking can't pump the agent off the tile.
+- One treat at a time; poking again mid-flight just re-triggers the mouth.
+  Suppressed under Reduce Motion and `.lowest` power mode, but a treat
+  already airborne when the mode flips still finishes.
+
+The turtle is drawn as a **red-eared slider** — scute grid, head on a neck,
+red ear stripe. Those three cues are what separate it from a green blob at
+Dock size.
+
+## Paddling
+
+`DuckState.strokePhase` drives limb animation: the turtle's flippers, the
+penguin's wings, the otter's paws. It's advanced inside `DuckState.step`, not
+in the renderer, so it stops on its own under Reduce Motion and `.lowest`,
+where the agent only calls `followWater`.
+
+- `strokeRate` — 0.35 Hz at rest → 2.5 Hz at a pegged speed metric. The
+  resting end is slow on purpose: the tile drops to 10fps when idle, which
+  still gives a slow stroke ~28 frames per cycle. A fast stroke would step.
+- `strokeIntensity` — swing amplitude 0…1, rising with the speed metric and
+  falling to zero as `sleepiness` climbs, so a sleeping agent's limbs hang.
+- Everything swings about its own joint via `withHinge`. Phase relationships
+  are per species: the turtle's front and rear flippers are half a cycle apart
+  so it rows; the penguin's two wings mirror each other, because it faces the
+  viewer and one-up-one-down reads as falling over; the otter's paws work
+  against each other, which reads as fussing rather than swimming.
+
+Cost, measured on an M-series Mac: a full tile frame is ~0.53 ms (sim ~0.015
+ms); the flapping adds two `sin()` calls (~5 ns) and two CTM rotations. The
+tile costs ~0.5% of one core at 10fps idle and ~3.2% at 60fps. Animation on
+something already drawn every frame is free — only raising the frame rate
+costs anything.
+
 ## Claude Usage Integration
 
 BubbleDuck can drive the water level/color from Claude Code subscription limits.

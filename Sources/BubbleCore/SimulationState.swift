@@ -19,6 +19,13 @@ public struct SimulationState: Sendable {
     /// which point they're removed and produce a small displacement + ripple.
     public var raindrops: [Raindrop] = []
 
+    /// The treat currently in flight, hovering, or being swallowed. At most
+    /// one — poking again while one is airborne doesn't launch a second.
+    public var treats: [Treat] = []
+
+    /// Scraps flung loose by a bite. Purely decorative, gone in half a second.
+    public var crumbs: [TreatCrumb] = []
+
     /// Rain spawn intensity 0...1, typically normalized from disk IOPS by
     /// the macOS layer. 0 → no rain, 1 → roughly a drop per frame (max).
     public var rainIntensity: Double = 0.0
@@ -369,6 +376,11 @@ public struct SimulationState: Sendable {
         // after Reduce Motion toggles on, so there's no sudden pop).
         stepRaindrops()
 
+        // Same for a treat already in the air, and for the hop/roll it may
+        // have knocked into the agent: both finish rather than freeze.
+        stepTreats()
+        duck.stepStartle(deltaTime: 1.0 / 60.0)
+
         // Step existing bubbles in both modes so any currently on-screen
         // bubbles finish rising and naturally drain the tank.
         let popped = bubbleSystem.step(waterLevels: water.levels)
@@ -444,6 +456,172 @@ public struct SimulationState: Sendable {
         overlay.stepAlpha()
     }
 
+    // MARK: - Treats
+
+    /// True while something thrown is still in play.
+    public var treatInFlight: Bool { !treats.isEmpty }
+
+    /// Whether a treat can be thrown right now. Motion-suppressing modes say
+    /// no, and so does a treat already in the air.
+    public var canThrowTreat: Bool {
+        config.treatsEnabled
+            && duck.enabled
+            && treats.isEmpty
+            && !reduceMotion
+            && effectivePowerMode != .lowest
+    }
+
+    /// The agent was poked. Throws whatever this species gets thrown at it,
+    /// falling back to the plain mouth-open reaction when a treat isn't
+    /// possible (feature off, Reduce Motion, one already in the air).
+    ///
+    /// Returns true if a treat was actually launched.
+    @discardableResult
+    public mutating func throwTreat() -> Bool {
+        guard duck.enabled else { return false }
+        guard canThrowTreat else {
+            duck.react()
+            return false
+        }
+
+        let agent = config.agentType
+        let behavior = agent.treatBehavior
+
+        // Lobbed in from whichever side the agent isn't hugging, so the
+        // throw crosses the tile instead of appearing on top of the agent.
+        let fromLeft = duck.x >= 0.5
+        let treat = Treat(
+            kind: agent.treatKind,
+            behavior: behavior,
+            originX: fromLeft ? -0.08 : 1.08,
+            originY: 1.02,
+            flightTime: agent.treatFlightTime,
+            arcHeight: 0.07,
+            spinRate: SimulationState.spinRate(for: agent.treatKind, fromLeft: fromLeft)
+        )
+        treats.append(treat)
+
+        duck.sleepiness = 0
+        // Only the eaters open up on the throw — a startled quack belongs at
+        // the splash, and the frog's mouth opens when its tongue fires.
+        if behavior == .eaten {
+            duck.mouth.trigger()
+        }
+        return true
+    }
+
+    /// How fast each kind tumbles in flight. A rock spins hard, a leaf
+    /// flutters, an insect flies level.
+    static func spinRate(for kind: TreatKind, fromLeft: Bool) -> Double {
+        let magnitude: Double
+        switch kind {
+        case .rock: magnitude = 7.0
+        case .watermelon: magnitude = 2.2
+        case .fish: magnitude = 3.4
+        case .pellet: magnitude = 5.0
+        case .lettuce: magnitude = 1.6
+        case .insect: magnitude = 0.0
+        }
+        return fromLeft ? -magnitude : magnitude
+    }
+
+    /// Where a treat is headed, in canvas fractions: the agent's mouth for
+    /// the eaters, a hover point in front of the frog, open water alongside
+    /// the two species that can't eat.
+    public func treatTarget(for behavior: TreatBehavior, agent: AgentType) -> (x: Double, y: Double) {
+        let anchor = agent.treatAnchor
+        let scale = duck.sizeScale
+        // Anchors are written for an agent facing right. Mirroring them for
+        // an agent drifting left would need the renderer to mirror too, so
+        // both stay as drawn.
+        var tx = duck.x + anchor.x * scale
+        var ty = duck.y + anchor.y * scale
+
+        switch behavior {
+        case .eaten:
+            break
+        case .tongue:
+            // Out of reach until the tongue goes for it.
+            tx += 0.10 * scale
+            ty += 0.05 * scale
+        case .splash:
+            // Land on the water rather than at the agent's waistline.
+            ty = water.level(atFraction: tx)
+        }
+
+        return (x: min(0.97, max(0.03, tx)), y: min(0.97, max(0.02, ty)))
+    }
+
+    /// Advance the thrown treat and any crumbs, applying whatever the treat
+    /// does on arrival.
+    private mutating func stepTreats() {
+        guard !treats.isEmpty || !crumbs.isEmpty else { return }
+        let dt = 1.0 / 60.0
+        let agent = config.agentType
+
+        var i = 0
+        while i < treats.count {
+            let target = treatTarget(for: treats[i].behavior, agent: agent)
+            let event = treats[i].step(deltaTime: dt, targetX: target.x, targetY: target.y)
+
+            switch event {
+            case .arrived:
+                switch treats[i].behavior {
+                case .eaten: swallowTreat(treats[i])
+                case .splash: splashTreat(treats[i])
+                case .tongue: break   // now hovering, waiting for the tongue
+                }
+            case .strike:
+                duck.mouth.trigger()
+            case .finished, nil:
+                break
+            }
+
+            if treats[i].phase == .done {
+                treats.remove(at: i)
+            } else {
+                i += 1
+            }
+        }
+
+        var c = 0
+        while c < crumbs.count {
+            crumbs[c].step(deltaTime: dt)
+            if crumbs[c].age >= 1.0 {
+                crumbs.remove(at: c)
+            } else {
+                c += 1
+            }
+        }
+    }
+
+    /// Bite down and scatter a few scraps.
+    private mutating func swallowTreat(_ treat: Treat) {
+        duck.mouth.snapShut()
+        guard !reduceMotion, effectivePowerMode != .lowest else { return }
+        for _ in 0..<4 {
+            crumbs.append(TreatCrumb(
+                kind: treat.kind,
+                x: treat.x,
+                y: treat.y,
+                vx: Double.random(in: -0.32...0.32),
+                vy: Double.random(in: 0.12...0.42)
+            ))
+        }
+    }
+
+    /// A rock lands beside a bath toy: splash, ripple, and a startled agent.
+    private mutating func splashTreat(_ treat: Treat) {
+        let isLowest = effectivePowerMode == .lowest
+        let col = min(max(0, Int(treat.x * Double(water.columnCount))), water.columnCount - 1)
+        water.displace(column: col, amount: -0.014)
+        duck.startle(strength: 1.0)
+        duck.mouth.trigger()
+        guard !reduceMotion, !isLowest else { return }
+        ripples.append(RippleRing(x: treat.x, y: water.levels[col], maxRadius: 0.17))
+        bubbleSystem.spawnBurst(x: treat.x, nearSurface: water.levels[col], count: 3)
+    }
+
     /// Move every active raindrop down by its fall speed; a drop that
     /// reaches its column's water surface is removed and produces a small
     /// displacement + surface ring. Called unconditionally so existing
@@ -494,6 +672,23 @@ public struct DuckState: Sendable {
     /// Randomized start so a swapped agent doesn't yawn immediately.
     public var mouth: MouthState = MouthState(initialInterval: Double.random(in: 4.0...11.0))
 
+    /// Paddling phase in radians, 0…2π. Drives flippers, feet and paws for
+    /// the species that have them; species drawn without visible limbs
+    /// ignore it.
+    public var strokePhase: Double = 0
+
+    /// Vertical hop above the water line, canvas fraction, from being
+    /// startled. Zero at rest; the renderer adds it to the agent's position.
+    public var hopOffset: Double = 0
+    /// Hop velocity, canvas fractions per second.
+    public var hopVelocity: Double = 0
+
+    /// Body tilt in radians from being startled — a damped spring that
+    /// settles back to level. The renderer rotates the whole character by it.
+    public var tiltAngle: Double = 0
+    /// Tilt angular velocity, radians per second.
+    public var tiltVelocity: Double = 0
+
     /// Idle-sleep progress (aiesrocks/bubble-duck#5). Climbs while CPU is
     /// below `idleCPUThreshold`, drops fast when CPU spikes again. Fully
     /// asleep (1.0) forces eyes shut via `effectiveEyelidOpenness` and
@@ -542,6 +737,74 @@ public struct DuckState: Sendable {
     public mutating func react() {
         mouth.trigger()
         sleepiness = 0
+    }
+
+    // MARK: - Paddling
+
+    /// Strokes per second at rest, and at a fully pegged speed metric. The
+    /// resting end is deliberately slow: the tile drops to 10fps when idle,
+    /// and a slow stroke still has ~28 frames per cycle there, where a fast
+    /// one would visibly step.
+    public static let strokeRateRange: ClosedRange<Double> = 0.35...2.5
+
+    /// Current stroke frequency in Hz, from the agent's speed metric.
+    public var strokeRate: Double {
+        let t = max(0, min(1, speedFactor))
+        let range = DuckState.strokeRateRange
+        return range.lowerBound + (range.upperBound - range.lowerBound) * t
+    }
+
+    /// How far the limbs swing, 0…1. Rises with the speed metric and falls
+    /// away as the agent nods off, so a sleeping agent's feet hang still.
+    public var strokeIntensity: Double {
+        let drive = 0.35 + 0.65 * max(0, min(1, speedFactor))
+        let awake = 1.0 - DuckState.smoothstep(from: 0.4, to: 1.0, value: sleepiness)
+        return drive * awake
+    }
+
+    // MARK: - Startle
+
+    /// Downward pull on a hop, canvas fractions per second squared.
+    public static let hopGravity: Double = 2.2
+    /// Spring constant pulling a tilted agent back to level (rad/s²/rad).
+    public static let tiltStiffness: Double = 60.0
+    /// Damping on the tilt spring, tuned to settle in about a second
+    /// without looking like it's in treacle.
+    public static let tiltDamping: Double = 7.0
+
+    /// Something landed next to the agent. `strength` scales both the hop
+    /// and the roll: 1.0 is a rock dropped right beside it.
+    ///
+    /// The impulse is a maximum rather than a sum, so poking repeatedly
+    /// can't pump the agent off the top of the tile.
+    public mutating func startle(strength: Double) {
+        let s = max(0, min(1.5, strength))
+        hopVelocity = max(hopVelocity, 0.55 * s)
+        tiltVelocity = max(tiltVelocity, 1.9 * s)
+    }
+
+    /// Advance the hop arc and the tilt spring. Called every frame, in every
+    /// power mode, so an agent knocked about before a mode switch still
+    /// settles instead of freezing mid-hop.
+    public mutating func stepStartle(deltaTime: Double) {
+        if hopVelocity != 0 || hopOffset > 0 {
+            hopVelocity -= DuckState.hopGravity * deltaTime
+            hopOffset += hopVelocity * deltaTime
+            if hopOffset <= 0 {
+                hopOffset = 0
+                hopVelocity = 0
+            }
+        }
+
+        if tiltAngle != 0 || tiltVelocity != 0 {
+            tiltVelocity += (-DuckState.tiltStiffness * tiltAngle
+                             - DuckState.tiltDamping * tiltVelocity) * deltaTime
+            tiltAngle += tiltVelocity * deltaTime
+            if abs(tiltAngle) < 0.0005 && abs(tiltVelocity) < 0.005 {
+                tiltAngle = 0
+                tiltVelocity = 0
+            }
+        }
     }
 
     /// Effective eyelid openness combining blink animation and sleepiness.
@@ -616,6 +879,12 @@ public struct DuckState: Sendable {
         let curved = cpuLoad * cpuLoad  // quadratic: 0.2→0.04, 0.8→0.64
         let targetAmplitude = 0.3 + curved * 14.0  // 0.3pt idle … 14pt full load
         bobAmplitude += (targetAmplitude - bobAmplitude) * 0.08
+
+        // Paddling. Advanced here rather than in the renderer so it stops on
+        // its own under Reduce Motion / Lowest, where the agent only calls
+        // `followWater`.
+        strokePhase += 2 * .pi * strokeRate * dt
+        if strokePhase > .pi * 2 { strokePhase -= .pi * 2 }
 
         // Bob speed also increases with CPU load
         let previousBobSin = sin(bobAngle)

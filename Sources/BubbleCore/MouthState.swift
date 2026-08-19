@@ -94,6 +94,16 @@ public struct MouthState: Sendable, Equatable {
         progress = 0.0001
     }
 
+    /// Bite down now: skip whatever is left of the hold and go straight to
+    /// the closing edge. Used when a treat lands in an open mouth — waiting
+    /// out a hippo's three-second hold with the food already inside reads as
+    /// the treat having missed.
+    public mutating func snapShut() {
+        guard progress > 0, progress < profile.holdEnd else { return }
+        progress = profile.holdEnd
+        openness = MouthState.envelope(progress, profile: profile)
+    }
+
     /// True while the mouth is animating.
     public var isOpening: Bool { progress > 0 }
 

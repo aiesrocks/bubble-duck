@@ -145,7 +145,7 @@ struct SettingsView: View {
         [
             SettingsGroup(
                 id: "agent", title: "Agent",
-                keywords: "duck hippo penguin otter turtle frog boat character size speed hover poke mouth",
+                keywords: "duck hippo penguin otter turtle frog boat character size speed hover poke mouth treat feed watermelon fish rock lettuce insect",
                 advancedOnly: false, content: { AnyView(agentGroup) }
             ),
             SettingsGroup(
@@ -215,6 +215,11 @@ struct SettingsView: View {
                 Text(metric.rawValue).tag(metric)
             }
         }
+        Toggle("Poking throws a treat", isOn: $store.config.treatsEnabled)
+        if store.config.treatsEnabled {
+            Text(treatDescription)
+                .font(.caption).foregroundStyle(.secondary)
+        }
         if advanced {
             LabeledSlider(label: "Size", value: $store.config.agentSizeScale,
                           range: SimulationConfig.agentSizeRange, format: "%.2f×")
@@ -239,6 +244,20 @@ struct SettingsView: View {
                      + "Accessibility permission to find the tile.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// One line telling the user what the character they picked is in for.
+    private var treatDescription: String {
+        switch store.config.agentType {
+        case .hippo:        return "Click the Dock icon to lob the hippo a watermelon."
+        case .mandarinDuck: return "Click the Dock icon to toss the duck some food."
+        case .otter:        return "Click the Dock icon to throw the otter a fish."
+        case .penguin:      return "Click the Dock icon to throw the penguin a fish."
+        case .turtle:       return "Click the Dock icon to feed the turtle a lettuce leaf."
+        case .frog:         return "Click the Dock icon to release an insect for the frog to catch."
+        case .rubberDuck:   return "Click the Dock icon to drop a rock next to the duck."
+        case .origamiBoat:  return "Click the Dock icon to drop a rock next to the boat."
         }
     }
 

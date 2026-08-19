@@ -71,6 +71,14 @@ public struct WaterSimulation: Sendable {
         }
     }
 
+    /// Surface height under a horizontal position given as a 0…1 fraction of
+    /// the tank's width. Saves callers that think in canvas fractions (the
+    /// agent, thrown treats) from repeating the column-index arithmetic.
+    public func level(atFraction x: Double) -> Double {
+        let index = min(max(0, Int(x * Double(columnCount))), columnCount - 1)
+        return levels[index]
+    }
+
     /// Displace the water surface at a column (used when bubbles pop or are created).
     /// Only affects the ripple offset — cannot change the baseline level.
     public mutating func displace(column: Int, amount: Double) {

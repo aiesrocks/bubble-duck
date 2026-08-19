@@ -57,6 +57,11 @@ public struct SimulationConfig: Sendable, Equatable, Codable {
     /// Which metric drives the agent's drift speed.
     public var speedMetric: SpeedMetric = .networkIO
 
+    /// Poking the tile lobs the agent a treat — a watermelon at the hippo, a
+    /// fish at the penguin, a rock next to the rubber duck. Off leaves the
+    /// poke as a plain mouth-open reaction.
+    public var treatsEnabled: Bool = true
+
     /// Show rain driven by disk IOPS.
     public var rainEnabled: Bool = true
 

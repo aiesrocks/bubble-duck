@@ -103,12 +103,15 @@ final class DockTileController {
         (hoverMonitor.isRunning, hoverMonitor.lastError)
     }
 
-    /// Poke the agent: it opens its mouth, wakes up, and splashes. Driven by
-    /// a Dock icon click, the "Poke Agent" menu item, or the cursor entering
-    /// the tile when hover reactions are switched on.
+    /// Poke the agent: it wakes up, splashes, and — unless treats are off —
+    /// gets something lobbed at it. Driven by a Dock icon click, the "Poke
+    /// Agent" menu item, or the cursor entering the tile when hover
+    /// reactions are switched on.
     func pokeAgent() {
         guard simulation.duck.enabled else { return }
-        simulation.duck.react()
+        // Throws a treat when it can, and falls back to the plain
+        // mouth-open reaction when it can't.
+        simulation.throwTreat()
         let surface = simulation.duck.y
         simulation.bubbleSystem.spawnBurst(x: simulation.duck.x, nearSurface: surface, count: 4)
         if simulation.effectivePowerMode != .lowest && !simulation.reduceMotion {
